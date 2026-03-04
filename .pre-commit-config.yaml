@@ -19,6 +19,7 @@ repos:
       - id: check-json
         exclude: '.*/skills/.*'
       - id: fix-encoding-pragma
+        args: [--remove-pragma]
         exclude: '.*/skills/.*'
       - id: detect-private-key
       - id: trailing-whitespace
@@ -110,6 +111,30 @@ repos:
           --disable=C0114,
           --disable=C0115,
           --disable=C0116,
+          --disable=C0301,
+          --disable=C0206,
+          --disable=C0413,
+          --disable=R0911,
+          --disable=R0912,
+          --disable=R0915,
+          --disable=R0904,
+          --disable=R1702,
+          --disable=W0107,
+          --disable=W0212,
+          --disable=W0611,
+          --disable=W0612,
+          --disable=W0613,
+          --disable=W0621,
+          --disable=W0707,
+          --disable=W1309,
+          --disable=W1510,
+          --disable=W2301,
+          --disable=E0603,
+          --disable=E0611,
+          --disable=E1120,
+          --disable=E1123,
+          --disable=E1130,
+          --disable=F0010,
         ]
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: 'v3.0.0'

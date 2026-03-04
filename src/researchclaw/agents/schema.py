@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional, Required, TypedDict
+import sys
+
+if sys.version_info >= (3, 11):
+    from typing import Literal, Optional, Required, TypedDict
+else:
+    from typing import Literal, Optional, TypedDict
+
+    from typing_extensions import Required
 
 
 class Base64Source(TypedDict, total=False):

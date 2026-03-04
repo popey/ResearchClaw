@@ -406,15 +406,9 @@ class QQChannel(BaseChannel):
         should_refresh_token = False
 
         def _connect() -> bool:  # noqa: C901
-            nonlocal (
-                session_id,
-                last_seq,
-                reconnect_attempts,
-                last_connect_time,
-                quick_disconnect_count,
-                should_refresh_token,
-                identify_fail_count,
-            )
+            nonlocal session_id, last_seq, reconnect_attempts
+            nonlocal last_connect_time, quick_disconnect_count
+            nonlocal should_refresh_token, identify_fail_count
             if self._stop_event.is_set():
                 return False
 
