@@ -43,7 +43,7 @@ jobs:
       - name: Build
         working-directory: website
         env:
-          VITE_BASE_PATH: "/"
+          VITE_BASE_PATH: "/ResearchClaw/"
         run: pnpm run build
 
       # Copy installation scripts so they are served from the website
