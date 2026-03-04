@@ -1,0 +1,146 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "researchclaw"
+dynamic = ["version"]
+description = "ResearchClaw – Your AI Research Assistant. An intelligent agent-powered assistant designed specifically for academic researchers, supporting paper search, literature review, citation management, data analysis, and more."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10, <3.14"
+authors = [
+    { name = "ResearchClaw Team" },
+]
+keywords = [
+    "ai-assistant",
+    "research",
+    "academic",
+    "paper-search",
+    "literature-review",
+    "citation-management",
+    "arxiv",
+    "semantic-scholar",
+    "agent",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    # ── Agent framework ──────────────────────────────────────────
+    "agentscope>=1.0.0",
+
+    # ── Web & API ────────────────────────────────────────────────
+    "uvicorn[standard]>=0.29",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "python-multipart>=0.0.7",
+    "sse-starlette>=1.8",
+
+    # ── Scheduling ───────────────────────────────────────────────
+    "apscheduler>=3.10,<4",
+
+    # ── Research-specific ────────────────────────────────────────
+    "arxiv>=2.1",                    # ArXiv API client
+    "semanticscholar>=0.8",          # Semantic Scholar API
+    "PyPDF2>=3.0",                   # PDF parsing
+    "pdfplumber>=0.10",              # Advanced PDF extraction
+    "bibtexparser>=2.0.0b",          # BibTeX parsing and generation
+    "scholarly>=1.7",                # Google Scholar access
+    "feedparser>=6.0",               # RSS feed parsing for paper alerts
+
+    # ── Data analysis ────────────────────────────────────────────
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "tabulate>=0.9",
+
+    # ── NLP & text processing ────────────────────────────────────
+    "transformers>=4.36",
+    "onnxruntime>=1.16",
+    "tiktoken>=0.5",
+
+    # ── Browser automation ───────────────────────────────────────
+    "playwright>=1.40",
+
+    # ── CLI & utilities ──────────────────────────────────────────
+    "click>=8.1",
+    "rich>=13.0",
+    "python-dotenv>=1.0",
+    "watchfiles>=0.21",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+latex = [
+    "pylatexenc>=2.10",
+    "latexcodec>=2.0",
+]
+local = [
+    "huggingface-hub>=0.20",
+]
+llamacpp = [
+    "llama-cpp-python>=0.2",
+]
+ollama = [
+    "ollama>=0.1",
+]
+all = [
+    "researchclaw[latex,local]",
+]
+
+[project.scripts]
+researchclaw = "researchclaw.cli.main:cli"
+
+[project.urls]
+Homepage = "https://github.com/researchclaw/researchclaw"
+Documentation = "https://researchclaw.github.io"
+Repository = "https://github.com/researchclaw/researchclaw"
+Issues = "https://github.com/researchclaw/researchclaw/issues"
+
+# ── Setuptools configuration ─────────────────────────────────────
+[tool.setuptools.dynamic]
+version = { attr = "researchclaw.__version__.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+researchclaw = [
+    "console/**/*",
+    "agents/md_files/**/*",
+    "agents/skills/**/*",
+    "tokenizer/**/*",
+]
+
+# ── Ruff configuration ───────────────────────────────────────────
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["researchclaw"]
+
+# ── Pytest configuration ─────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"

@@ -1,0 +1,1 @@
+"""Lifecycle hooks for ScholarAgent."""
