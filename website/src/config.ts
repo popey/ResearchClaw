@@ -21,7 +21,8 @@ let cached: SiteConfig | null = null;
 export async function loadSiteConfig(): Promise<SiteConfig> {
   if (cached) return cached;
   try {
-    const r = await fetch("/site.config.json");
+    const base = import.meta.env.BASE_URL ?? "/";
+    const r = await fetch(`${base}site.config.json`);
     if (r.ok) {
       cached = (await r.json()) as SiteConfig;
       return cached;

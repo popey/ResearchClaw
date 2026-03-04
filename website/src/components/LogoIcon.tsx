@@ -6,7 +6,7 @@ interface LogoIconProps {
   className?: string;
 }
 
-const LOGO_SRC = "/logo.png";
+const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
 
 export function LogoIcon({ size, className = "" }: LogoIconProps) {
   return (
