@@ -482,7 +482,8 @@ button:disabled {
 
 /* ---------- Inputs ---------- */
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -497,7 +498,8 @@ textarea {
     box-shadow var(--transition-fast);
 }
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: var(--brand-400);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
 }
@@ -1267,6 +1269,18 @@ textarea::placeholder {
   .msg {
     max-width: 95%;
   }
+  .cron-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .cron-form-span-2 {
+    grid-column: span 1;
+  }
+  .cron-bubble-wrap {
+    top: 16px;
+    right: 12px;
+    left: 12px;
+    max-width: none;
+  }
 }
 
 /* ---------- Scrollbar ---------- */
@@ -1361,4 +1375,92 @@ a:focus-visible {
   font-size: 18px;
   font-weight: 700;
   margin: 0;
+}
+
+/* ---------- Cron Form ---------- */
+.cron-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.cron-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cron-form-field > span {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.cron-form-span-2 {
+  grid-column: span 2;
+}
+.cron-form-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---------- Cron Bubble ---------- */
+.cron-bubble-wrap {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.cron-bubble-wrap > * {
+  pointer-events: auto;
+}
+.cron-bubble-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+}
+.cron-bubble-icon {
+  color: var(--brand-600);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.cron-bubble-text {
+  margin: 0;
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 6em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+.cron-bubble-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cron-bubble-close:hover {
+  background: var(--slate-100);
+  color: var(--text-primary);
 }

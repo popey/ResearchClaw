@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
@@ -61,3 +61,17 @@ async def push_event(event: dict, req: Request):
     if push_store:
         await push_store.broadcast(event)
     return {"status": "ok"}
+
+
+@router.get("/push-messages")
+async def get_push_messages(
+    session_id: str | None = Query(None, description="Optional session id"),
+):
+    """Return pending/recent console push messages for cron bubbles."""
+    from ..console_push_store import get_recent, take
+
+    if session_id:
+        messages = await take(session_id)
+    else:
+        messages = await get_recent()
+    return {"messages": messages}

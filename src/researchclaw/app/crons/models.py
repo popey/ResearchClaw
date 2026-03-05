@@ -53,6 +53,18 @@ class DispatchTarget(BaseModel):
     user_id: str
     session_id: str
 
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def normalize_user_id(cls, v: Any) -> str:
+        text = "" if v is None else str(v).strip()
+        return text or "main"
+
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def normalize_session_id(cls, v: Any) -> str:
+        text = "" if v is None else str(v).strip()
+        return text or "main"
+
 
 class DispatchSpec(BaseModel):
     """Dispatch configuration for a cron job."""
@@ -62,6 +74,12 @@ class DispatchSpec(BaseModel):
     target: DispatchTarget
     mode: Literal["stream", "final"] = Field(default="stream")
     meta: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("channel", mode="before")
+    @classmethod
+    def normalize_channel(cls, v: Any) -> str:
+        text = "" if v is None else str(v).strip()
+        return text or DEFAULT_CHANNEL
 
 
 class JobRuntimeSpec(BaseModel):

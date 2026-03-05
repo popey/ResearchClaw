@@ -112,6 +112,15 @@ class ScholarAgent:
             data_query,
             plot_chart,
         )
+        from .tools.cron_jobs import (
+            cron_create_job,
+            cron_delete_job,
+            cron_get_job,
+            cron_list_jobs,
+            cron_pause_job,
+            cron_resume_job,
+            cron_run_job,
+        )
         from .tools.file_io import read_file, write_file, edit_file
         from .tools.get_current_time import get_current_time
         from .tools.latex_helper import latex_compile_check, latex_template
@@ -135,6 +144,14 @@ class ScholarAgent:
             "data_describe": data_describe,
             "data_query": data_query,
             "plot_chart": plot_chart,
+            # Scheduling tools
+            "cron_list_jobs": cron_list_jobs,
+            "cron_get_job": cron_get_job,
+            "cron_create_job": cron_create_job,
+            "cron_delete_job": cron_delete_job,
+            "cron_pause_job": cron_pause_job,
+            "cron_resume_job": cron_resume_job,
+            "cron_run_job": cron_run_job,
             # General tools
             "run_shell": run_shell,
             "read_file": read_file,

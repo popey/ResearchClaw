@@ -5,12 +5,35 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
 from researchclaw.constant import WORKING_DIR
 
 router = APIRouter()
+
+
+async def _get_control_cron_jobs(cron: Any) -> list[Any]:
+    """Return cron jobs for control page (prefer registered/simple jobs)."""
+    if cron is None:
+        return []
+
+    # Prefer persistent cron jobs.
+    if hasattr(cron, "list_jobs"):
+        try:
+            return await cron.list_jobs()
+        except Exception:
+            pass
+
+    # Backward-compatible path for built-in interval jobs.
+    if hasattr(cron, "list_registered_jobs"):
+        try:
+            return cron.list_registered_jobs()
+        except Exception:
+            pass
+
+    return []
 
 
 @router.get("/status")
@@ -22,13 +45,14 @@ async def runtime_status(req: Request):
     cron = getattr(req.app.state, "cron", None)
     channels = getattr(req.app.state, "channel_manager", None)
     mcp = getattr(req.app.state, "mcp_manager", None)
+    cron_jobs = await _get_control_cron_jobs(cron)
 
     return {
         "service": "ResearchClaw",
         "mode": "24x7-standby",
         "uptime_seconds": uptime_seconds,
         "runner_running": bool(runner and runner.is_running),
-        "cron_jobs": cron.list_jobs() if cron else [],
+        "cron_jobs": cron_jobs,
         "channels": channels.list_channels() if channels else [],
         "mcp_clients": mcp.list_clients() if mcp else [],
     }
@@ -37,9 +61,7 @@ async def runtime_status(req: Request):
 @router.get("/cron-jobs")
 async def list_cron_jobs(req: Request):
     cron = getattr(req.app.state, "cron", None)
-    if not cron:
-        return []
-    return cron.list_jobs()
+    return await _get_control_cron_jobs(cron)
 
 
 @router.get("/channels")
@@ -119,7 +141,15 @@ async def enable_cron_job(job_name: str, req: Request):
             status_code=500,
             detail="Cron manager not available",
         )
-    cron.enable_job(job_name)
+    if hasattr(cron, "enable_job_by_name"):
+        cron.enable_job_by_name(job_name)
+    elif hasattr(cron, "enable_job"):
+        cron.enable_job(job_name)
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Cron manager does not support enable operation",
+        )
     return {"enabled": True, "job": job_name}
 
 
@@ -131,7 +161,15 @@ async def disable_cron_job(job_name: str, req: Request):
             status_code=500,
             detail="Cron manager not available",
         )
-    cron.disable_job(job_name)
+    if hasattr(cron, "disable_job_by_name"):
+        cron.disable_job_by_name(job_name)
+    elif hasattr(cron, "disable_job"):
+        cron.disable_job(job_name)
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Cron manager does not support disable operation",
+        )
     return {"enabled": False, "job": job_name}
 
 

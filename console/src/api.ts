@@ -7,6 +7,7 @@ import type {
   McpClientItem,
   PaperItem,
   ProviderItem,
+  PushMessage,
   SessionItem,
   SkillItem,
   StreamEvent,
@@ -62,10 +63,132 @@ export async function getControlStatus(): Promise<any> {
   return res.json();
 }
 
+function normalizeCronJob(job: any): CronJobItem {
+  const task_type = job?.task_type === "text" ? "text" : "agent";
+  const mode: "stream" | "final" =
+    job?.dispatch?.mode === "stream" ? "stream" : "final";
+  const schedule = {
+    type: "cron" as const,
+    cron: String(job?.schedule?.cron ?? ""),
+    timezone: String(job?.schedule?.timezone ?? "UTC"),
+  };
+  const dispatch: CronJobItem["dispatch"] = {
+    type: "channel" as const,
+    channel: String(job?.dispatch?.channel ?? "console"),
+    target: {
+      user_id: String(job?.dispatch?.target?.user_id ?? "main"),
+      session_id: String(job?.dispatch?.target?.session_id ?? "main"),
+    },
+    mode,
+    meta:
+      job?.dispatch?.meta && typeof job.dispatch.meta === "object"
+        ? (job.dispatch.meta as Record<string, unknown>)
+        : {},
+  };
+  const runtime: CronJobItem["runtime"] = {
+    max_concurrency: Number(job?.runtime?.max_concurrency ?? 1),
+    timeout_seconds: Number(job?.runtime?.timeout_seconds ?? 120),
+    misfire_grace_seconds: Number(job?.runtime?.misfire_grace_seconds ?? 60),
+  };
+
+  return {
+    id: String(job?.id ?? ""),
+    name: String(job?.name ?? ""),
+    enabled: Boolean(job?.enabled ?? true),
+    task_type,
+    cron: schedule.cron,
+    timezone: schedule.timezone,
+    channel: dispatch.channel,
+    target_user_id: dispatch.target.user_id,
+    target_session_id: dispatch.target.session_id,
+    mode,
+    text: typeof job?.text === "string" ? job.text : null,
+    request:
+      job?.request
+      && typeof job.request === "object"
+      && "input" in (job.request as Record<string, unknown>)
+        ? (job.request as CronJobItem["request"])
+        : null,
+    schedule,
+    dispatch,
+    runtime,
+    meta:
+      job?.meta && typeof job.meta === "object"
+        ? (job.meta as Record<string, unknown>)
+        : {},
+  };
+}
+
+function toCronJobPayload(job: CronJobItem): Record<string, unknown> {
+  return {
+    id: job.id,
+    name: job.name,
+    enabled: job.enabled,
+    schedule: {
+      type: "cron",
+      cron: job.schedule.cron,
+      timezone: job.schedule.timezone,
+    },
+    task_type: job.task_type,
+    text: job.text ?? null,
+    request: job.request ?? null,
+    dispatch: {
+      type: "channel",
+      channel: job.dispatch.channel,
+      target: {
+        user_id: job.dispatch.target.user_id,
+        session_id: job.dispatch.target.session_id,
+      },
+      mode: job.dispatch.mode,
+      meta: job.dispatch.meta ?? {},
+    },
+    runtime: {
+      max_concurrency: job.runtime.max_concurrency,
+      timeout_seconds: job.runtime.timeout_seconds,
+      misfire_grace_seconds: job.runtime.misfire_grace_seconds,
+    },
+    meta: job.meta ?? {},
+  };
+}
+
 export async function getCronJobs(): Promise<CronJobItem[]> {
-  const res = await fetch("/api/control/cron-jobs");
+  const res = await fetch("/api/crons/cron/jobs");
   if (!res.ok) throw new Error("Cron jobs request failed");
-  return res.json();
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+  return data.map((job: any) => normalizeCronJob(job));
+}
+
+export async function createCronJob(job: CronJobItem): Promise<CronJobItem> {
+  const res = await fetch("/api/crons/cron/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(toCronJobPayload(job)),
+  });
+  if (!res.ok) throw new Error("Create cron job failed");
+  const data = await res.json();
+  return normalizeCronJob(data);
+}
+
+export async function replaceCronJob(
+  jobId: string,
+  job: CronJobItem,
+): Promise<CronJobItem> {
+  const res = await fetch(`/api/crons/cron/jobs/${encodeURIComponent(jobId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(toCronJobPayload(job)),
+  });
+  if (!res.ok) throw new Error("Update cron job failed");
+  const data = await res.json();
+  return normalizeCronJob(data);
+}
+
+export async function deleteCronJob(jobId: string): Promise<void> {
+  const res = await fetch(`/api/crons/cron/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Delete cron job failed");
 }
 
 export async function getChannels(): Promise<ChannelItem[]> {
@@ -99,17 +222,45 @@ export async function deleteSession(sessionId: string): Promise<void> {
 }
 
 export async function toggleCronJob(
-  name: string,
+  jobId: string,
   enabled: boolean,
 ): Promise<void> {
-  const action = enabled ? "enable" : "disable";
+  const action = enabled ? "resume" : "pause";
   const res = await fetch(
-    `/api/control/cron-jobs/${encodeURIComponent(name)}/${action}`,
+    `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/${action}`,
     {
       method: "POST",
     },
   );
   if (!res.ok) throw new Error("Toggle cron job failed");
+}
+
+export async function runCronJobNow(jobId: string): Promise<void> {
+  const res = await fetch(
+    `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/run`,
+    {
+      method: "POST",
+    },
+  );
+  if (!res.ok) throw new Error("Run cron job failed");
+}
+
+export async function getConsolePushMessages(
+  sessionId?: string,
+): Promise<PushMessage[]> {
+  const path = sessionId
+    ? `/api/console/push-messages?session_id=${encodeURIComponent(sessionId)}`
+    : "/api/console/push-messages";
+  const res = await fetch(path);
+  if (!res.ok) throw new Error("Get console push messages failed");
+  const data = await res.json();
+  if (!Array.isArray(data?.messages)) return [];
+  return data.messages
+    .map((item: any) => ({
+      id: String(item?.id ?? ""),
+      text: String(item?.text ?? ""),
+    }))
+    .filter((item: PushMessage) => item.id && item.text);
 }
 
 export async function getHeartbeat(): Promise<any> {

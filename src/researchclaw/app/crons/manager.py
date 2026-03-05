@@ -247,15 +247,44 @@ class CronManager:
 
     async def pause_job(self, job_id: str) -> None:
         """Pause a persistent cron job."""
+        if self._repo is None:
+            raise KeyError(f"Job not found: {job_id}")
         async with self._lock:
+            spec = await self._repo.get_job(job_id)
+            if spec is None:
+                raise KeyError(f"Job not found: {job_id}")
+
+            # Persist disabled state so frontend reflects it after reload.
+            if spec.enabled:
+                spec = spec.model_copy(update={"enabled": False})
+                await self._repo.upsert_job(spec)
+
             if self._scheduler:
-                self._scheduler.pause_job(job_id)
+                aps_job = self._scheduler.get_job(job_id)
+                if aps_job is not None:
+                    self._scheduler.pause_job(job_id)
 
     async def resume_job(self, job_id: str) -> None:
         """Resume a paused persistent cron job."""
+        if self._repo is None:
+            raise KeyError(f"Job not found: {job_id}")
         async with self._lock:
+            spec = await self._repo.get_job(job_id)
+            if spec is None:
+                raise KeyError(f"Job not found: {job_id}")
+
+            # Persist enabled state so frontend reflects it after reload.
+            if not spec.enabled:
+                spec = spec.model_copy(update={"enabled": True})
+                await self._repo.upsert_job(spec)
+
             if self._scheduler:
-                self._scheduler.resume_job(job_id)
+                aps_job = self._scheduler.get_job(job_id)
+                if aps_job is None:
+                    if self._started:
+                        await self._register_or_update(spec)
+                else:
+                    self._scheduler.resume_job(job_id)
 
     async def reschedule_heartbeat(self) -> None:
         """Reload heartbeat config and update or remove the heartbeat job."""

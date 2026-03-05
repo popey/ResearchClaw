@@ -39,6 +39,15 @@ export type PaperItem = {
   summary?: string;
 };
 
+export type CronTaskType = "agent" | "text";
+
+export type CronJobRequest = {
+  input: unknown;
+  session_id?: string | null;
+  user_id?: string | null;
+  [key: string]: unknown;
+};
+
 export type SessionItem = {
   session_id: string;
   title?: string;
@@ -48,10 +57,44 @@ export type SessionItem = {
 };
 
 export type CronJobItem = {
+  id: string;
   name: string;
   enabled: boolean;
-  running: boolean;
-  interval_seconds: number;
+  task_type: CronTaskType;
+  cron: string;
+  timezone: string;
+  channel: string;
+  target_user_id: string;
+  target_session_id: string;
+  mode: "stream" | "final";
+  text?: string | null;
+  request?: CronJobRequest | null;
+  schedule: {
+    type: "cron";
+    cron: string;
+    timezone: string;
+  };
+  dispatch: {
+    type: "channel";
+    channel: string;
+    target: {
+      user_id: string;
+      session_id: string;
+    };
+    mode: "stream" | "final";
+    meta: Record<string, unknown>;
+  };
+  runtime: {
+    max_concurrency: number;
+    timeout_seconds: number;
+    misfire_grace_seconds: number;
+  };
+  meta: Record<string, unknown>;
+};
+
+export type PushMessage = {
+  id: string;
+  text: string;
 };
 
 export type ChannelItem = {

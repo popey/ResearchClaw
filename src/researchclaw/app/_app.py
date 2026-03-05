@@ -24,7 +24,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..__version__ import __version__
-from ..constant import CHATS_FILE, CORS_ORIGINS, DOCS_ENABLED, WORKING_DIR
+from ..constant import (
+    CHATS_FILE,
+    CORS_ORIGINS,
+    DOCS_ENABLED,
+    JOBS_FILE,
+    WORKING_DIR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -208,9 +214,16 @@ async def lifespan(app: FastAPI):
         from .crons.deadline_reminder import deadline_reminder
         from .crons.heartbeat import run_heartbeat_once
         from .crons.paper_digest import paper_digest
+        from .crons.repo.json_repo import JsonJobRepository
         from ..constant import HEARTBEAT_ENABLED, HEARTBEAT_INTERVAL_MINUTES
 
-        cron = CronManager()
+        cron_repo = JsonJobRepository(Path(WORKING_DIR) / JOBS_FILE)
+        cron = CronManager(
+            repo=cron_repo,
+            runner=runner,
+            channel_manager=getattr(app.state, "channel_manager", None),
+            timezone="UTC",
+        )
 
         async def heartbeat_job() -> None:
             if runner is None:

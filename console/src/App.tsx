@@ -28,6 +28,7 @@ import McpPage from "./pages/McpPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import AgentConfigPage from "./pages/AgentConfigPage";
 import ModelsPage from "./pages/ModelsPage";
+import ConsoleCronBubble from "./components/ConsoleCronBubble";
 
 type NavItem = {
   to: string;
@@ -129,6 +130,7 @@ export default function App() {
       </aside>
 
       <main className="content">
+        <ConsoleCronBubble />
         <Routes>
           <Route path="/" element={<ChatPage />} />
           <Route path="/chat" element={<ChatPage />} />
