@@ -123,6 +123,12 @@ async def update_provider_settings(name: str, update: ProviderSettingsUpdate):
         raise HTTPException(status_code=500, detail="Provider store not available")
 
 
+@router.put("/{name}")
+async def update_provider_put(name: str, update: ProviderSettingsUpdate):
+    """Update settings via PUT (alias for POST /{name}/settings)."""
+    return await update_provider_settings(name, update)
+
+
 @router.post("/{name}/apply")
 async def apply_provider(name: str, req: Request):
     """Apply the provider to the running agent (hot-reload).

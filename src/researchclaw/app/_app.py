@@ -176,44 +176,40 @@ async def health_check():
 
 # ── API routes ──────────────────────────────────────────────────────────────
 
-try:
-    from .routers import (
-        agent,
-        config,
-        console,
-        control,
-        envs,
-        mcp,
-        papers,
-        providers,
-        skills,
-        workspace,
-    )
-    from .crons.api import router as cron_router
-    from .runner.api import router as runner_router
+_router_defs: list[tuple[str, str, list[str]]] = [
+    ("researchclaw.app.routers.agent", "/api/agent", ["Agent"]),
+    ("researchclaw.app.routers.config", "/api/config", ["Config"]),
+    ("researchclaw.app.routers.console", "/api/console", ["Console"]),
+    ("researchclaw.app.routers.control", "/api/control", ["Control"]),
+    ("researchclaw.app.routers.envs", "/api/envs", ["Environments"]),
+    ("researchclaw.app.routers.mcp", "/api/mcp", ["MCP"]),
+    ("researchclaw.app.routers.papers", "/api/papers", ["Papers"]),
+    ("researchclaw.app.routers.providers", "/api/providers", ["Providers"]),
+    ("researchclaw.app.routers.skills", "/api/skills", ["Skills"]),
+    ("researchclaw.app.routers.workspace", "/api/workspace", ["Workspace"]),
+]
 
-    app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
-    app.include_router(config.router, prefix="/api/config", tags=["Config"])
-    app.include_router(console.router, prefix="/api/console", tags=["Console"])
-    app.include_router(control.router, prefix="/api/control", tags=["Control"])
-    app.include_router(cron_router, prefix="/api/crons", tags=["Crons"])
-    app.include_router(envs.router, prefix="/api/envs", tags=["Environments"])
-    app.include_router(mcp.router, prefix="/api/mcp", tags=["MCP"])
-    app.include_router(papers.router, prefix="/api/papers", tags=["Papers"])
-    app.include_router(
-        providers.router,
-        prefix="/api/providers",
-        tags=["Providers"],
-    )
-    app.include_router(runner_router, prefix="/api/runner", tags=["Runner"])
-    app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
-    app.include_router(
-        workspace.router,
-        prefix="/api/workspace",
-        tags=["Workspace"],
-    )
-except ImportError as e:
-    logger.warning("Some routers could not be loaded: %s", e)
+for _mod_path, _prefix, _tags in _router_defs:
+    try:
+        import importlib as _il
+
+        _mod = _il.import_module(_mod_path)
+        app.include_router(_mod.router, prefix=_prefix, tags=_tags)
+    except Exception as e:
+        logger.warning("Router %s could not be loaded: %s", _mod_path, e)
+
+# Extra routers with non-standard module paths
+for _mod_path, _prefix, _tags in [
+    ("researchclaw.app.crons.api", "/api/crons", ["Crons"]),
+    ("researchclaw.app.runner.api", "/api/runner", ["Runner"]),
+]:
+    try:
+        import importlib as _il
+
+        _mod = _il.import_module(_mod_path)
+        app.include_router(_mod.router, prefix=_prefix, tags=_tags)
+    except Exception as e:
+        logger.warning("Router %s could not be loaded: %s", _mod_path, e)
 
 
 # ── Console (SPA) static file serving ──────────────────────────────────────
