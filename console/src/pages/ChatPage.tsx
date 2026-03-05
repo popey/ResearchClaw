@@ -287,20 +287,13 @@ function ThinkingBlock({
 
   return (
     <div className="thinking-block">
-      <div
-        className="thinking-header"
-        onClick={() => setExpanded((v) => !v)}
-      >
+      <div className="thinking-header" onClick={() => setExpanded((v) => !v)}>
         <BrainCircuit size={14} />
-        <span>
-          {streaming ? "正在思考..." : "思考过程"}
-        </span>
+        <span>{streaming ? "正在思考..." : "思考过程"}</span>
         {streaming && <Loader2 size={12} className="spinner" />}
         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
       </div>
-      {expanded && (
-        <div className="thinking-content">{content}</div>
-      )}
+      {expanded && <div className="thinking-content">{content}</div>}
     </div>
   );
 }
@@ -309,7 +302,10 @@ function ToolCallsBlock({ calls }: { calls: ToolCallInfo[] }) {
   return (
     <div className="tool-calls-block">
       {calls.map((tc, i) => (
-        <div key={i} className={`tool-call-item tool-call-${tc.status || "running"}`}>
+        <div
+          key={i}
+          className={`tool-call-item tool-call-${tc.status || "running"}`}
+        >
           <div className="tool-call-header">
             {tc.status === "running" ? (
               <Loader2 size={13} className="spinner" />

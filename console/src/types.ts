@@ -16,7 +16,14 @@ export type ToolCallInfo = {
 
 /** SSE event from /api/agent/chat/stream */
 export type StreamEvent = {
-  type: "thinking" | "content" | "content_replace" | "tool_call" | "tool_result" | "done" | "error";
+  type:
+    | "thinking"
+    | "content"
+    | "content_replace"
+    | "tool_call"
+    | "tool_result"
+    | "done"
+    | "error";
   content?: string;
   name?: string;
   arguments?: string;

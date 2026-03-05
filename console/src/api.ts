@@ -250,9 +250,7 @@ export async function listProviders(): Promise<ProviderItem[]> {
   return Array.isArray(data.providers) ? data.providers : [];
 }
 
-export async function createProvider(
-  provider: ProviderItem,
-): Promise<void> {
+export async function createProvider(provider: ProviderItem): Promise<void> {
   const res = await fetch("/api/providers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -265,11 +263,14 @@ export async function updateProvider(
   name: string,
   settings: Partial<Omit<ProviderItem, "name" | "enabled">>,
 ): Promise<void> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(name)}/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  });
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(name)}/settings`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    },
+  );
   if (!res.ok) throw new Error("Update provider failed");
 }
 
@@ -286,10 +287,9 @@ export async function setProviderEnabled(
 }
 
 export async function applyProvider(name: string): Promise<void> {
-  const res = await fetch(
-    `/api/providers/${encodeURIComponent(name)}/apply`,
-    { method: "POST" },
-  );
+  const res = await fetch(`/api/providers/${encodeURIComponent(name)}/apply`, {
+    method: "POST",
+  });
   if (!res.ok) throw new Error("Apply provider failed");
 }
 

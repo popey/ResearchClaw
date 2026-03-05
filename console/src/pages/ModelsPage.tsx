@@ -298,7 +298,10 @@ export default function ModelsPage() {
             </div>
             <div>
               <label className="config-label">
-                <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                <Key
+                  size={12}
+                  style={{ marginRight: 4, verticalAlign: "middle" }}
+                />
                 API Key
               </label>
               <input
@@ -312,7 +315,10 @@ export default function ModelsPage() {
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <label className="config-label">
-                <Globe size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                <Globe
+                  size={12}
+                  style={{ marginRight: 4, verticalAlign: "middle" }}
+                />
                 Base URL（留空使用默认）
               </label>
               <input
@@ -446,9 +452,7 @@ export default function ModelsPage() {
                       <button
                         className="btn-secondary btn-sm"
                         onClick={() =>
-                          editingName === p.name
-                            ? cancelEdit()
-                            : startEdit(p)
+                          editingName === p.name ? cancelEdit() : startEdit(p)
                         }
                         title="编辑设置"
                       >
@@ -584,4 +588,3 @@ export default function ModelsPage() {
     </div>
   );
 }
-
