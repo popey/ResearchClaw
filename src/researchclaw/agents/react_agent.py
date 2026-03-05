@@ -336,22 +336,57 @@ class ScholarAgent:
                         "tool_calls": [],
                     }
                     for tc in response.tool_calls:
-                        tc_func = tc.function if hasattr(tc, "function") else tc.get("function", {})
-                        tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
-                        tc_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
-                        tc_args = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "")
-                        assistant_msg["tool_calls"].append({
-                            "id": tc_id,
-                            "type": "function",
-                            "function": {"name": tc_name, "arguments": tc_args},
-                        })
+                        tc_func = (
+                            tc.function
+                            if hasattr(tc, "function")
+                            else tc.get("function", {})
+                        )
+                        tc_id = (
+                            tc.id if hasattr(tc, "id") else tc.get("id", "")
+                        )
+                        tc_name = (
+                            tc_func.name
+                            if hasattr(tc_func, "name")
+                            else tc_func.get("name", "")
+                        )
+                        tc_args = (
+                            tc_func.arguments
+                            if hasattr(tc_func, "arguments")
+                            else tc_func.get("arguments", "")
+                        )
+                        assistant_msg["tool_calls"].append(
+                            {
+                                "id": tc_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc_name,
+                                    "arguments": tc_args,
+                                },
+                            },
+                        )
                     messages.append(assistant_msg)
 
                     for tool_call in response.tool_calls:
-                        tc_func = tool_call.function if hasattr(tool_call, "function") else tool_call.get("function", {})
-                        tc_id = tool_call.id if hasattr(tool_call, "id") else tool_call.get("id", "")
-                        tool_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
-                        tool_args_raw = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "{}")
+                        tc_func = (
+                            tool_call.function
+                            if hasattr(tool_call, "function")
+                            else tool_call.get("function", {})
+                        )
+                        tc_id = (
+                            tool_call.id
+                            if hasattr(tool_call, "id")
+                            else tool_call.get("id", "")
+                        )
+                        tool_name = (
+                            tc_func.name
+                            if hasattr(tc_func, "name")
+                            else tc_func.get("name", "")
+                        )
+                        tool_args_raw = (
+                            tc_func.arguments
+                            if hasattr(tc_func, "arguments")
+                            else tc_func.get("arguments", "{}")
+                        )
 
                         logger.info(
                             "[Tool Call] %s | args=%s",
@@ -361,7 +396,11 @@ class ScholarAgent:
 
                         if tool_name in self._tools:
                             try:
-                                tool_args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+                                tool_args = (
+                                    json.loads(tool_args_raw)
+                                    if isinstance(tool_args_raw, str)
+                                    else tool_args_raw
+                                )
                                 result = self._tools[tool_name](**tool_args)
                                 result_str = str(result)
                                 logger.info(
@@ -377,7 +416,11 @@ class ScholarAgent:
                                     },
                                 )
                             except Exception as e:
-                                logger.exception("[Tool Error] %s | %s", tool_name, e)
+                                logger.exception(
+                                    "[Tool Error] %s | %s",
+                                    tool_name,
+                                    e,
+                                )
                                 messages.append(
                                     {
                                         "role": "tool",
@@ -406,6 +449,7 @@ class ScholarAgent:
                 text_tool_calls = self._parse_text_tool_calls(content)
                 if text_tool_calls:
                     import json as _json2
+
                     logger.info(
                         "[Text Tool Call] Parsed %d tool call(s) from text output",
                         len(text_tool_calls),
@@ -418,7 +462,9 @@ class ScholarAgent:
                         t_name = ttc["name"]
                         t_args = ttc["arguments"]
                         logger.info(
-                            "[Text Tool Call] %s | args=%s", t_name, str(t_args)[:500]
+                            "[Text Tool Call] %s | args=%s",
+                            t_name,
+                            str(t_args)[:500],
                         )
 
                         if t_name in self._tools:
@@ -431,14 +477,18 @@ class ScholarAgent:
                                     result_str[:500],
                                 )
                             except Exception as e:
-                                logger.exception("[Text Tool Error] %s | %s", t_name, e)
+                                logger.exception(
+                                    "[Text Tool Error] %s | %s",
+                                    t_name,
+                                    e,
+                                )
                                 result_str = f"Tool error: {e}"
                         else:
                             logger.warning("[Text Tool Unknown] %s", t_name)
                             result_str = f"Unknown tool: {t_name}"
 
                         tool_results_text.append(
-                            f"Tool `{t_name}` result:\n{result_str}"
+                            f"Tool `{t_name}` result:\n{result_str}",
                         )
 
                     # Feed tool results back as a user message so model can summarize
@@ -447,20 +497,32 @@ class ScholarAgent:
                     continue
 
                 # Truly final response — no tool calls at all
-                self.memory.add_message("assistant", content, session_id=session_id)
+                self.memory.add_message(
+                    "assistant",
+                    content,
+                    session_id=session_id,
+                )
                 return content
 
             except Exception as e:
                 logger.exception("Error in reasoning iteration %d", iteration)
                 error_msg = f"I encountered an error during reasoning: {e}"
-                self.memory.add_message("assistant", error_msg, session_id=session_id)
+                self.memory.add_message(
+                    "assistant",
+                    error_msg,
+                    session_id=session_id,
+                )
                 return error_msg
 
         timeout_msg = (
             "I've reached the maximum number of reasoning steps. "
             "Please try breaking your request into smaller parts."
         )
-        self.memory.add_message("assistant", timeout_msg, session_id=session_id)
+        self.memory.add_message(
+            "assistant",
+            timeout_msg,
+            session_id=session_id,
+        )
         return timeout_msg
 
     def _build_messages(self) -> list[dict[str, str]]:
@@ -511,7 +573,7 @@ class ScholarAgent:
                 sig = inspect.signature(func)
                 doc = inspect.getdoc(func) or ""
                 # First line of docstring as description
-                desc = doc.split("\n")[0].strip() if doc else name
+                desc = doc.split("\n", maxsplit=1)[0].strip() if doc else name
 
                 properties: dict[str, Any] = {}
                 required: list[str] = []
@@ -557,7 +619,11 @@ class ScholarAgent:
                 }
                 schemas.append(schema)
             except Exception:
-                logger.debug("Could not build schema for tool: %s", name, exc_info=True)
+                logger.debug(
+                    "Could not build schema for tool: %s",
+                    name,
+                    exc_info=True,
+                )
 
         logger.info("Built %d tool schemas for function calling", len(schemas))
         return schemas
@@ -615,7 +681,9 @@ class ScholarAgent:
 
         # ── Pattern 1b: <FunctionCall> {'tool' => 'name', 'args' => ...} </FunctionCall>
         fc_blocks = re.findall(
-            r"<FunctionCall>(.*?)</FunctionCall>", content, re.DOTALL
+            r"<FunctionCall>(.*?)</FunctionCall>",
+            content,
+            re.DOTALL,
         )
         for block in fc_blocks:
             # Extract tool name (both ' and " quotes, and => or : separators)
@@ -659,6 +727,7 @@ class ScholarAgent:
                         # Try python-style dict
                         try:
                             import ast
+
                             params = ast.literal_eval(args_m.group(1))
                         except Exception:
                             pass
@@ -675,7 +744,9 @@ class ScholarAgent:
 
         # ── Pattern 2: <tool_call>{"name": "...", "arguments": {...}}</tool_call> ──
         tc_blocks = re.findall(
-            r"<tool_call>\s*(.*?)\s*</tool_call>", content, re.DOTALL
+            r"<tool_call>\s*(.*?)\s*</tool_call>",
+            content,
+            re.DOTALL,
         )
         for block in tc_blocks:
             try:
@@ -766,7 +837,10 @@ class ScholarAgent:
                     accumulated_content = ""
                     tool_calls_in_turn: list[dict] = []
 
-                    for event in self.model.stream(messages, **stream_model_kwargs):
+                    for event in self.model.stream(
+                        messages,
+                        **stream_model_kwargs,
+                    ):
                         etype = event.get("type")
 
                         if etype == "thinking":
@@ -795,7 +869,10 @@ class ScholarAgent:
                             "content": accumulated_content or None,
                             "tool_calls": [
                                 {
-                                    "id": tc.get("id", f"call_{iteration}_{i}"),
+                                    "id": tc.get(
+                                        "id",
+                                        f"call_{iteration}_{i}",
+                                    ),
                                     "type": "function",
                                     "function": {
                                         "name": tc["name"],
@@ -820,8 +897,14 @@ class ScholarAgent:
 
                             if tool_name in self._tools:
                                 try:
-                                    tool_args = _json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                                    result = self._tools[tool_name](**tool_args)
+                                    tool_args = (
+                                        _json.loads(raw_args)
+                                        if isinstance(raw_args, str)
+                                        else raw_args
+                                    )
+                                    result = self._tools[tool_name](
+                                        **tool_args,
+                                    )
                                     result_str = str(result)
                                     logger.info(
                                         "[Stream Tool Result] %s | result=%s",
@@ -829,16 +912,22 @@ class ScholarAgent:
                                         result_str[:500],
                                     )
                                 except Exception as e:
-                                    logger.exception("[Stream Tool Error] %s | %s", tool_name, e)
+                                    logger.exception(
+                                        "[Stream Tool Error] %s | %s",
+                                        tool_name,
+                                        e,
+                                    )
                                     result_str = f"Tool error: {e}"
                             else:
                                 result_str = f"Unknown tool: {tool_name}"
 
-                            messages.append({
-                                "role": "tool",
-                                "content": result_str,
-                                "tool_call_id": call_id,
-                            })
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "content": result_str,
+                                    "tool_call_id": call_id,
+                                },
+                            )
 
                             yield {
                                 "type": "tool_result",
@@ -855,7 +944,7 @@ class ScholarAgent:
                         accumulated_content[:1000],
                     )
                     text_tool_calls = self._parse_text_tool_calls(
-                        accumulated_content
+                        accumulated_content,
                     )
                     if text_tool_calls:
                         logger.info(
@@ -865,6 +954,7 @@ class ScholarAgent:
 
                         # Strip tool-call XML from content shown to user
                         import re as _re
+
                         cleaned = _re.sub(
                             r"<FunctionCall>.*?</FunctionCall>",
                             "",
@@ -886,7 +976,10 @@ class ScholarAgent:
                         }
 
                         messages.append(
-                            {"role": "assistant", "content": accumulated_content}
+                            {
+                                "role": "assistant",
+                                "content": accumulated_content,
+                            },
                         )
 
                         tool_results_parts: list[str] = []
@@ -901,7 +994,10 @@ class ScholarAgent:
                             yield {
                                 "type": "tool_call",
                                 "name": t_name,
-                                "arguments": _json.dumps(t_args, ensure_ascii=False),
+                                "arguments": _json.dumps(
+                                    t_args,
+                                    ensure_ascii=False,
+                                ),
                             }
 
                             if t_name in self._tools:
@@ -915,7 +1011,9 @@ class ScholarAgent:
                                     )
                                 except Exception as e:
                                     logger.exception(
-                                        "[Stream Text Tool Error] %s | %s", t_name, e
+                                        "[Stream Text Tool Error] %s | %s",
+                                        t_name,
+                                        e,
                                     )
                                     result_str = f"Tool error: {e}"
                             else:
@@ -927,7 +1025,7 @@ class ScholarAgent:
                                 "result": result_str[:2000],
                             }
                             tool_results_parts.append(
-                                f"Tool `{t_name}` result:\n{result_str}"
+                                f"Tool `{t_name}` result:\n{result_str}",
                             )
 
                         combined = "\n\n".join(tool_results_parts)
@@ -938,91 +1036,144 @@ class ScholarAgent:
                     full_content = accumulated_content
                     break
 
-                else:
-                    # Non-streaming fallback
-                    response = self.model(messages, **stream_model_kwargs)
+                # Non-streaming fallback
+                response = self.model(messages, **stream_model_kwargs)
 
-                    if hasattr(response, "tool_calls") and response.tool_calls:
-                        # Add assistant message with tool_calls
-                        ns_assistant_msg: dict[str, Any] = {
-                            "role": "assistant",
-                            "content": getattr(response, "content", None) or None,
-                            "tool_calls": [],
-                        }
-                        for tc in response.tool_calls:
-                            tc_func = tc.function if hasattr(tc, "function") else tc.get("function", {})
-                            tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
-                            tc_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
-                            tc_args = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "")
-                            ns_assistant_msg["tool_calls"].append({
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    # Add assistant message with tool_calls
+                    ns_assistant_msg: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": getattr(response, "content", None) or None,
+                        "tool_calls": [],
+                    }
+                    for tc in response.tool_calls:
+                        tc_func = (
+                            tc.function
+                            if hasattr(tc, "function")
+                            else tc.get("function", {})
+                        )
+                        tc_id = (
+                            tc.id if hasattr(tc, "id") else tc.get("id", "")
+                        )
+                        tc_name = (
+                            tc_func.name
+                            if hasattr(tc_func, "name")
+                            else tc_func.get("name", "")
+                        )
+                        tc_args = (
+                            tc_func.arguments
+                            if hasattr(tc_func, "arguments")
+                            else tc_func.get("arguments", "")
+                        )
+                        ns_assistant_msg["tool_calls"].append(
+                            {
                                 "id": tc_id,
                                 "type": "function",
-                                "function": {"name": tc_name, "arguments": tc_args},
-                            })
-                        messages.append(ns_assistant_msg)
+                                "function": {
+                                    "name": tc_name,
+                                    "arguments": tc_args,
+                                },
+                            },
+                        )
+                    messages.append(ns_assistant_msg)
 
-                        for tool_call in response.tool_calls:
-                            tc_func = tool_call.function if hasattr(tool_call, "function") else tool_call.get("function", {})
-                            tc_id = tool_call.id if hasattr(tool_call, "id") else tool_call.get("id", "")
-                            tool_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
-                            tool_args_raw = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "{}")
+                    for tool_call in response.tool_calls:
+                        tc_func = (
+                            tool_call.function
+                            if hasattr(tool_call, "function")
+                            else tool_call.get("function", {})
+                        )
+                        tc_id = (
+                            tool_call.id
+                            if hasattr(tool_call, "id")
+                            else tool_call.get("id", "")
+                        )
+                        tool_name = (
+                            tc_func.name
+                            if hasattr(tc_func, "name")
+                            else tc_func.get("name", "")
+                        )
+                        tool_args_raw = (
+                            tc_func.arguments
+                            if hasattr(tc_func, "arguments")
+                            else tc_func.get("arguments", "{}")
+                        )
 
-                            logger.info(
-                                "[Stream Fallback Tool Call] %s | args=%s",
+                        logger.info(
+                            "[Stream Fallback Tool Call] %s | args=%s",
+                            tool_name,
+                            str(tool_args_raw)[:500],
+                        )
+
+                        yield {
+                            "type": "tool_call",
+                            "name": tool_name,
+                            "arguments": str(tool_args_raw),
+                        }
+
+                        if tool_name in self._tools:
+                            try:
+                                tool_args = (
+                                    _json.loads(tool_args_raw)
+                                    if isinstance(tool_args_raw, str)
+                                    else tool_args_raw
+                                )
+                                result = self._tools[tool_name](
+                                    **tool_args,
+                                )
+                                result_str = str(result)
+                                logger.info(
+                                    "[Stream Fallback Tool Result] %s | result=%s",
+                                    tool_name,
+                                    result_str[:500],
+                                )
+                            except Exception as e:
+                                logger.exception(
+                                    "[Stream Fallback Tool Error] %s | %s",
+                                    tool_name,
+                                    e,
+                                )
+                                result_str = f"Tool error: {e}"
+                        else:
+                            logger.warning(
+                                "[Stream Fallback Tool Unknown] %s",
                                 tool_name,
-                                str(tool_args_raw)[:500],
                             )
+                            result_str = f"Unknown tool: {tool_name}"
 
-                            yield {
-                                "type": "tool_call",
-                                "name": tool_name,
-                                "arguments": str(tool_args_raw),
-                            }
-
-                            if tool_name in self._tools:
-                                try:
-                                    tool_args = _json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
-                                    result = self._tools[tool_name](**tool_args)
-                                    result_str = str(result)
-                                    logger.info(
-                                        "[Stream Fallback Tool Result] %s | result=%s",
-                                        tool_name,
-                                        result_str[:500],
-                                    )
-                                except Exception as e:
-                                    logger.exception("[Stream Fallback Tool Error] %s | %s", tool_name, e)
-                                    result_str = f"Tool error: {e}"
-                            else:
-                                logger.warning("[Stream Fallback Tool Unknown] %s", tool_name)
-                                result_str = f"Unknown tool: {tool_name}"
-
-                            messages.append({
+                        messages.append(
+                            {
                                 "role": "tool",
                                 "content": result_str,
                                 "tool_call_id": tc_id,
-                            })
+                            },
+                        )
 
-                            yield {
-                                "type": "tool_result",
-                                "name": tool_name,
-                                "result": result_str[:2000],
-                            }
+                        yield {
+                            "type": "tool_result",
+                            "name": tool_name,
+                            "result": result_str[:2000],
+                        }
 
-                        continue
+                    continue
 
-                    content = (
-                        response.content
-                        if hasattr(response, "content")
-                        else str(response)
-                    )
-                    full_content = content
-                    yield {"type": "content", "content": content}
-                    break
+                content = (
+                    response.content
+                    if hasattr(response, "content")
+                    else str(response)
+                )
+                full_content = content
+                yield {"type": "content", "content": content}
+                break
 
             except Exception as e:
                 logger.exception("Error in streaming iteration %d", iteration)
                 err = f"I encountered an error during reasoning: {e}"
-                self.memory.add_message("assistant", err, session_id=session_id)
+                self.memory.add_message(
+                    "assistant",
+                    err,
+                    session_id=session_id,
+                )
                 yield {"type": "error", "content": err}
                 return
 
@@ -1034,7 +1185,11 @@ class ScholarAgent:
             )
             yield {"type": "content", "content": full_content}
 
-        self.memory.add_message("assistant", full_content, session_id=session_id)
+        self.memory.add_message(
+            "assistant",
+            full_content,
+            session_id=session_id,
+        )
         yield {"type": "done", "content": full_content}
 
         # Run post-reply hooks

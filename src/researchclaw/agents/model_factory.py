@@ -66,7 +66,9 @@ class _OpenAIChatFallback:
 
             # ── Reasoning / thinking tokens ──
             reasoning = getattr(delta, "reasoning_content", None) or getattr(
-                delta, "reasoning", None
+                delta,
+                "reasoning",
+                None,
             )
             if reasoning:
                 yield {"type": "thinking", "content": reasoning}
@@ -82,7 +84,8 @@ class _OpenAIChatFallback:
                     if idx not in tool_call_bufs:
                         tool_call_bufs[idx] = {
                             "id": tc.id or "",
-                            "name": (tc.function.name if tc.function else "") or "",
+                            "name": (tc.function.name if tc.function else "")
+                            or "",
                             "arguments": "",
                         }
                     buf = tool_call_bufs[idx]
@@ -209,7 +212,7 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
     except ImportError:
         raise ImportError(
             "Neither agentscope nor openai SDK is available. "
-            "Install one with: pip install agentscope  or  pip install openai"
+            "Install one with: pip install agentscope  or  pip install openai",
         )
 
 
@@ -252,7 +255,7 @@ def _create_local_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
             return model, formatter
         except ImportError:
             raise ImportError(
-                "Neither agentscope nor openai SDK is available for Ollama fallback."
+                "Neither agentscope nor openai SDK is available for Ollama fallback.",
             )
 
     # Fallback: treat as OpenAI-compatible

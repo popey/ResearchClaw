@@ -44,7 +44,11 @@ class ProviderStore:
             items.append(config)
         self._save(items)
 
-    def update_provider_settings(self, name: str, settings: dict) -> ProviderConfig:
+    def update_provider_settings(
+        self,
+        name: str,
+        settings: dict,
+    ) -> ProviderConfig:
         """Update fields of an existing provider (partial update)."""
         items = self._load()
         for idx, item in enumerate(items):

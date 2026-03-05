@@ -99,7 +99,8 @@ async def delete_session(session_id: str, req: Request):
     if hasattr(runner, "runner") and runner.runner.agent is not None:
         agent = runner.runner.agent
         if hasattr(agent, "memory") and hasattr(
-            agent.memory, "delete_session_messages",
+            agent.memory,
+            "delete_session_messages",
         ):
             memory_deleted = agent.memory.delete_session_messages(session_id)
 

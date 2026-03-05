@@ -105,7 +105,10 @@ class AgentRunnerManager:
         session.add_message("user", message)
         full_content = ""
 
-        async for event in self.runner.chat_stream(message, session.session_id):
+        async for event in self.runner.chat_stream(
+            message,
+            session.session_id,
+        ):
             if event.get("type") == "done":
                 full_content = event.get("content", full_content)
             yield event

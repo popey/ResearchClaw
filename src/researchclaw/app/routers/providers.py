@@ -67,7 +67,10 @@ async def add_provider(config: ProviderConfig):
         store.save_provider(config.model_dump())
         return {"status": "ok", "provider": config.name}
     except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
 
 
 @router.post("/{name}/enable")
@@ -80,9 +83,15 @@ async def enable_provider(name: str, req: Request):
         store.set_enabled(name)
         return {"status": "ok", "name": name, "enabled": True}
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider '{name}' not found",
+        )
     except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
 
 
 @router.post("/{name}/disable")
@@ -95,9 +104,15 @@ async def disable_provider(name: str, req: Request):
         store.set_disabled(name)
         return {"status": "ok", "name": name, "enabled": False}
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider '{name}' not found",
+        )
     except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
 
 
 @router.post("/{name}/settings")
@@ -114,13 +129,21 @@ async def update_provider_settings(name: str, update: ProviderSettingsUpdate):
         result = updated.to_dict()
         if result.get("api_key"):
             result["api_key"] = (
-                result["api_key"][:8] + "..." if len(result["api_key"]) > 8 else "***"
+                result["api_key"][:8] + "..."
+                if len(result["api_key"]) > 8
+                else "***"
             )
         return {"status": "ok", "provider": result}
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider '{name}' not found",
+        )
     except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
 
 
 @router.put("/{name}")
@@ -142,12 +165,16 @@ async def apply_provider(name: str, req: Request):
         provider = store.get_provider(name)
         if provider is None:
             raise HTTPException(
-                status_code=404, detail=f"Provider '{name}' not found"
+                status_code=404,
+                detail=f"Provider '{name}' not found",
             )
 
         runner = getattr(req.app.state, "runner", None)
         if runner is None:
-            raise HTTPException(status_code=503, detail="Agent runner not available")
+            raise HTTPException(
+                status_code=503,
+                detail="Agent runner not available",
+            )
 
         model_config = {
             "provider": provider.provider_type,
@@ -162,7 +189,10 @@ async def apply_provider(name: str, req: Request):
     except HTTPException:
         raise
     except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
     except Exception as e:
         logger.exception("Failed to apply provider")
         raise HTTPException(status_code=500, detail=str(e))
@@ -178,9 +208,15 @@ async def remove_provider(name: str):
         store.remove_provider(name)
         return {"status": "deleted", "provider": name}
     except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"Provider {name} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider {name} not found",
+        )
 
 
 @router.get("/models")
@@ -202,4 +238,3 @@ async def list_available_models():
             ],
             "note": "Default model list (provider store not initialized)",
         }
-

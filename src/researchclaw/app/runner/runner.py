@@ -107,7 +107,8 @@ class AgentRunner:
         def _run():
             try:
                 for event in self.agent.reply_stream(
-                    message, session_id=session_id,
+                    message,
+                    session_id=session_id,
                 ):
                     q.put(event)
             except Exception as e:
@@ -122,7 +123,10 @@ class AgentRunner:
             # Check queue in a non-blocking way to keep the async loop alive
             try:
                 event = await asyncio.get_event_loop().run_in_executor(
-                    None, q.get, True, 60.0,
+                    None,
+                    q.get,
+                    True,
+                    60.0,
                 )
             except Exception:
                 break
