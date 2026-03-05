@@ -264,8 +264,8 @@ export async function updateProvider(
   name: string,
   settings: Partial<Omit<ProviderItem, "name" | "enabled">>,
 ): Promise<void> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, {
-    method: "PUT",
+  const res = await fetch(`/api/providers/${encodeURIComponent(name)}/settings`, {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
   });

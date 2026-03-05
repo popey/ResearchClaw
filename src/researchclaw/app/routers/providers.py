@@ -35,10 +35,6 @@ class ProviderSettingsUpdate(BaseModel):
     extra: dict[str, Any] | None = None
 
 
-class EnabledUpdate(BaseModel):
-    enabled: bool
-
-
 def _mask(providers: list[dict]) -> list[dict]:
     """Mask API keys for display."""
     for p in providers:
@@ -104,32 +100,13 @@ async def disable_provider(name: str, req: Request):
         raise HTTPException(status_code=500, detail="Provider store not available")
 
 
-@router.put("/{name}/enabled")
-async def set_provider_enabled(name: str, body: EnabledUpdate, req: Request):
-    """Enable or disable a provider (kept for backward compat)."""
-    try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
-        if body.enabled:
-            store.set_enabled(name)
-        else:
-            store.set_disabled(name)
-        return {"status": "ok", "name": name, "enabled": body.enabled}
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Provider store not available")
-
-
-@router.put("/{name}")
+@router.post("/{name}/settings")
 async def update_provider_settings(name: str, update: ProviderSettingsUpdate):
     """Update settings of an existing provider (partial update)."""
     try:
         from researchclaw.providers.store import ProviderStore
 
         store = ProviderStore()
-        # Only include non-None fields; skip api_key if empty string (keep existing)
         fields = update.model_dump(exclude_none=True)
         if fields.get("api_key") == "":
             fields.pop("api_key")
