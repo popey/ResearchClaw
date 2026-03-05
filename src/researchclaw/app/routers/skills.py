@@ -25,7 +25,7 @@ class SkillInstallRequest(BaseModel):
     hub_url: str | None = None
 
 
-@router.get("/")
+@router.get("")
 async def list_skills():
     """List all available skills."""
     try:

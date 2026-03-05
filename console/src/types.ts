@@ -1,6 +1,27 @@
 export type ChatMessage = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
+  /** Thinking/reasoning content (from thinking models) */
+  thinking?: string;
+  /** Tool calls made in this turn */
+  toolCalls?: ToolCallInfo[];
+};
+
+export type ToolCallInfo = {
+  name: string;
+  arguments?: string;
+  result?: string;
+  status?: "running" | "done" | "error";
+};
+
+/** SSE event from /api/agent/chat/stream */
+export type StreamEvent = {
+  type: "thinking" | "content" | "content_replace" | "tool_call" | "tool_result" | "done" | "error";
+  content?: string;
+  name?: string;
+  arguments?: string;
+  result?: string;
+  session_id?: string;
 };
 
 export type PaperItem = {

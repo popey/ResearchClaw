@@ -44,7 +44,7 @@ def _mask(providers: list[dict]) -> list[dict]:
     return providers
 
 
-@router.get("/")
+@router.get("")
 async def list_providers():
     """List configured LLM providers (API keys masked)."""
     try:
@@ -57,7 +57,7 @@ async def list_providers():
         return {"providers": [], "note": "Provider store not yet initialized"}
 
 
-@router.post("/")
+@router.post("")
 async def add_provider(config: ProviderConfig):
     """Add a new provider configuration."""
     try:

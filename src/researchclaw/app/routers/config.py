@@ -24,7 +24,7 @@ class ConfigUpdateRequest(BaseModel):
     value: Any
 
 
-@router.get("/")
+@router.get("")
 async def get_config():
     """Get current configuration."""
     config_path = Path(WORKING_DIR) / "config.json"
@@ -36,7 +36,7 @@ async def get_config():
         return {}
 
 
-@router.put("/")
+@router.put("")
 async def update_config(updates: dict[str, Any]):
     """Update configuration values."""
     config_path = Path(WORKING_DIR) / "config.json"

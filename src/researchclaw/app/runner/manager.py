@@ -81,6 +81,39 @@ class AgentRunnerManager:
 
         return response
 
+    async def chat_stream(self, message: str, session_id: str | None = None):
+        """Stream a chat response, yielding SSE event dicts."""
+        if not self.runner.is_running:
+            await self.start()
+            if not self.runner.is_running:
+                yield {
+                    "type": "error",
+                    "content": (
+                        "Scholar is not ready. Please configure your LLM "
+                        "provider first.\nRun `researchclaw init` or set "
+                        "up via Settings."
+                    ),
+                }
+                return
+
+        session = None
+        if session_id:
+            session = self.session_manager.get_session(session_id)
+        if not session:
+            session = self.session_manager.create_session()
+
+        session.add_message("user", message)
+        full_content = ""
+
+        async for event in self.runner.chat_stream(message, session.session_id):
+            if event.get("type") == "done":
+                full_content = event.get("content", full_content)
+            yield event
+
+        if full_content:
+            session.add_message("assistant", full_content)
+            self.session_manager._save_session(session)
+
     async def apply_provider(self, model_config: dict[str, Any]) -> None:
         """Hot-reload the agent with a new provider config."""
         logger.info(

@@ -9,6 +9,7 @@ import type {
   ProviderItem,
   SessionItem,
   SkillItem,
+  StreamEvent,
 } from "./types";
 
 export async function getHealth(): Promise<{ status: string }> {
@@ -311,4 +312,66 @@ export function appendMessage(
   next: ChatMessage,
 ): ChatMessage[] {
   return [...messages, next];
+}
+
+/**
+ * Stream a chat message via SSE.
+ * Calls `onEvent` for each parsed SSE event from the server.
+ * Returns an AbortController so the caller can cancel.
+ */
+export function streamChat(
+  message: string,
+  sessionId: string | undefined,
+  onEvent: (event: StreamEvent) => void,
+): AbortController {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch("/api/agent/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, session_id: sessionId, stream: true }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        onEvent({ type: "error", content: `HTTP ${res.status}` });
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const jsonStr = trimmed.slice(6);
+          if (!jsonStr || jsonStr === "[DONE]") continue;
+
+          try {
+            const event: StreamEvent = JSON.parse(jsonStr);
+            onEvent(event);
+          } catch {
+            // skip malformed JSON
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        onEvent({ type: "error", content: String(err) });
+      }
+    }
+  })();
+
+  return controller;
 }

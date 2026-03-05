@@ -49,7 +49,12 @@ class ResearchMemory:
         """Current compact summary of previous conversations."""
         return self._compact_summary
 
-    def add_message(self, role: str, content: str) -> None:
+    def add_message(
+        self,
+        role: str,
+        content: str,
+        session_id: Optional[str] = None,
+    ) -> None:
         """Add a message to the conversation history.
 
         Parameters
@@ -58,14 +63,17 @@ class ResearchMemory:
             Message role (``"user"``, ``"assistant"``, ``"system"``).
         content:
             Message content.
+        session_id:
+            Optional session ID to associate the message with.
         """
-        self._messages.append(
-            {
-                "role": role,
-                "content": content,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
+        msg: dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if session_id:
+            msg["session_id"] = session_id
+        self._messages.append(msg)
         self._save_state()
 
     def get_recent_messages(
@@ -182,6 +190,33 @@ class ResearchMemory:
         self._compact_summary = "\n".join(summary_parts)
         self._messages = recent
         self._save_state()
+
+    def delete_session_messages(self, session_id: str) -> int:
+        """Delete all messages associated with a specific session.
+
+        Parameters
+        ----------
+        session_id:
+            The session ID whose messages should be removed.
+
+        Returns
+        -------
+        int
+            Number of messages removed.
+        """
+        before = len(self._messages)
+        self._messages = [
+            m for m in self._messages if m.get("session_id") != session_id
+        ]
+        removed = before - len(self._messages)
+        if removed:
+            self._save_state()
+            logger.info(
+                "Deleted %d memory messages for session %s",
+                removed,
+                session_id,
+            )
+        return removed
 
     def clear(self) -> None:
         """Clear all memory."""

@@ -80,13 +80,55 @@ class AgentRunner:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            self.agent.reply,
-            message,
+            lambda: self.agent.reply(message, session_id=session_id),
         )
 
         if hasattr(response, "content"):
             return response.content
         return str(response)
+
+    async def chat_stream(
+        self,
+        message: str,
+        session_id: str | None = None,
+    ):
+        """Stream a response from the agent, yielding SSE event dicts.
+
+        Runs the blocking generator in an executor via a queue.
+        """
+        if not self.agent:
+            raise RuntimeError("Agent is not running")
+
+        import queue
+        import threading
+
+        q: queue.Queue = queue.Queue()
+
+        def _run():
+            try:
+                for event in self.agent.reply_stream(
+                    message, session_id=session_id,
+                ):
+                    q.put(event)
+            except Exception as e:
+                q.put({"type": "error", "content": str(e)})
+            finally:
+                q.put(None)  # sentinel
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        while True:
+            # Check queue in a non-blocking way to keep the async loop alive
+            try:
+                event = await asyncio.get_event_loop().run_in_executor(
+                    None, q.get, True, 60.0,
+                )
+            except Exception:
+                break
+            if event is None:
+                break
+            yield event
 
     async def restart(self, model_config: dict[str, Any] | None = None):
         """Restart the agent with a new configuration."""

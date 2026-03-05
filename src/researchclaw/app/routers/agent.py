@@ -110,23 +110,33 @@ async def chat(request: ChatRequest, req: Request):
 
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest, req: Request):
-    """Stream a response from ScholarAgent via SSE."""
+    """Stream a response from ScholarAgent via SSE.
+
+    Sends events of these types:
+    - ``thinking`` — reasoning/thinking tokens (from thinking models)
+    - ``content`` — regular content tokens
+    - ``tool_call`` — the agent is calling a tool
+    - ``tool_result`` — tool execution result
+    - ``done`` — final complete response
+    - ``error`` — an error occurred
+    """
     runner = getattr(req.app.state, "runner", None)
     session_id = request.session_id or str(uuid.uuid4())
 
     async def generate():
         if not runner:
-            yield f"data: {json.dumps({'error': 'Agent not running'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'content': 'Agent not running'})}\n\n"
             return
 
         try:
-            response = await runner.chat(
+            async for event in runner.chat_stream(
                 message=request.message,
                 session_id=session_id,
-            )
-            yield f"data: {json.dumps({'content': response, 'session_id': session_id, 'done': True})}\n\n"
+            ):
+                event["session_id"] = session_id
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e), 'session_id': session_id})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -134,6 +144,7 @@ async def chat_stream(request: ChatRequest, req: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
     )
 

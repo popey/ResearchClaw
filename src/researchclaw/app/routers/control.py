@@ -93,7 +93,21 @@ async def delete_session(session_id: str, req: Request):
         )
 
     runner.session_manager.delete_session(session_id)
-    return {"deleted": True, "session_id": session_id}
+
+    # Also clean up associated memory messages
+    memory_deleted = 0
+    if hasattr(runner, "runner") and runner.runner.agent is not None:
+        agent = runner.runner.agent
+        if hasattr(agent, "memory") and hasattr(
+            agent.memory, "delete_session_messages",
+        ):
+            memory_deleted = agent.memory.delete_session_messages(session_id)
+
+    return {
+        "deleted": True,
+        "session_id": session_id,
+        "memory_messages_deleted": memory_deleted,
+    }
 
 
 @router.post("/cron-jobs/{job_name}/enable")

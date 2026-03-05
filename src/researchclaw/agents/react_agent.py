@@ -91,6 +91,9 @@ class ScholarAgent:
 
         self.command_handler = CommandHandler(self)
 
+        # ── 7. Build tool schemas for OpenAI function calling ───────────
+        self._tool_schemas: list[dict[str, Any]] = self._build_tool_schemas()
+
         logger.info("ScholarAgent initialised with %d tools", len(self._tools))
 
     # ── Tool registration ───────────────────────────────────────────────
@@ -171,13 +174,24 @@ class ScholarAgent:
 
         try:
             import importlib.util
+            import sys
+
+            # Use the canonical package path so that relative imports
+            # (e.g. ``from ...tools.paper_reader``, ``from ....constant``)
+            # resolve correctly against the installed researchclaw package.
+            module_fqn = f"researchclaw.agents.skills.{skill_dir.name}"
+            package_fqn = module_fqn  # __init__.py ⇒ module IS the package
 
             spec = importlib.util.spec_from_file_location(
-                f"researchclaw.skills.{skill_dir.name}",
+                module_fqn,
                 skill_file,
+                submodule_search_locations=[str(skill_dir)],
             )
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
+                mod.__package__ = package_fqn
+                # Register in sys.modules so nested relative imports work
+                sys.modules[module_fqn] = mod
                 spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
                 # Convention: skills expose a `tools` dict or `register` function
@@ -232,7 +246,12 @@ class ScholarAgent:
 
     # ── Reply ───────────────────────────────────────────────────────────
 
-    def reply(self, message: str, **kwargs: Any) -> str:
+    def reply(
+        self,
+        message: str,
+        session_id: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         """Process a user message and return a response.
 
         This method:
@@ -244,6 +263,8 @@ class ScholarAgent:
         ----------
         message:
             The user's input message.
+        session_id:
+            Optional session ID to tag memory messages.
 
         Returns
         -------
@@ -262,7 +283,7 @@ class ScholarAgent:
                 message = hook.pre_reply(message)
 
         # ReAct reasoning loop
-        response = self._reasoning(message, **kwargs)
+        response = self._reasoning(message, session_id=session_id, **kwargs)
 
         # Run post-reply hooks
         for hook in self._hooks:
@@ -271,7 +292,12 @@ class ScholarAgent:
 
         return response
 
-    def _reasoning(self, message: str, **kwargs: Any) -> str:
+    def _reasoning(
+        self,
+        message: str,
+        session_id: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         """Execute the ReAct reasoning loop.
 
         Iteratively calls the LLM with tool availability, executing tools
@@ -285,85 +311,156 @@ class ScholarAgent:
             )
 
         # Add message to memory
-        self.memory.add_message("user", message)
+        self.memory.add_message("user", message, session_id=session_id)
 
         # Build messages for the model
         messages = self._build_messages()
 
+        # Prepare tool kwargs
+        model_kwargs: dict[str, Any] = {}
+        if self._tool_schemas:
+            model_kwargs["tools"] = self._tool_schemas
+
         for iteration in range(self.max_iters):
             try:
-                response = self.model(messages)
+                response = self.model(messages, **model_kwargs)
 
                 # Check if the model wants to use a tool
                 if hasattr(response, "tool_calls") and response.tool_calls:
+                    # Add assistant message with tool_calls (required by OpenAI API)
+                    import json
+
+                    assistant_msg: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": getattr(response, "content", None) or None,
+                        "tool_calls": [],
+                    }
+                    for tc in response.tool_calls:
+                        tc_func = tc.function if hasattr(tc, "function") else tc.get("function", {})
+                        tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
+                        tc_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
+                        tc_args = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "")
+                        assistant_msg["tool_calls"].append({
+                            "id": tc_id,
+                            "type": "function",
+                            "function": {"name": tc_name, "arguments": tc_args},
+                        })
+                    messages.append(assistant_msg)
+
                     for tool_call in response.tool_calls:
-                        tool_name = tool_call.get("function", {}).get(
-                            "name",
-                            "",
-                        )
-                        tool_args = tool_call.get("function", {}).get(
-                            "arguments",
-                            {},
+                        tc_func = tool_call.function if hasattr(tool_call, "function") else tool_call.get("function", {})
+                        tc_id = tool_call.id if hasattr(tool_call, "id") else tool_call.get("id", "")
+                        tool_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
+                        tool_args_raw = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "{}")
+
+                        logger.info(
+                            "[Tool Call] %s | args=%s",
+                            tool_name,
+                            str(tool_args_raw)[:500],
                         )
 
                         if tool_name in self._tools:
                             try:
-                                import json
-
-                                if isinstance(tool_args, str):
-                                    tool_args = json.loads(tool_args)
+                                tool_args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
                                 result = self._tools[tool_name](**tool_args)
+                                result_str = str(result)
+                                logger.info(
+                                    "[Tool Result] %s | result=%s",
+                                    tool_name,
+                                    result_str[:500],
+                                )
                                 messages.append(
                                     {
                                         "role": "tool",
-                                        "content": str(result),
-                                        "tool_call_id": tool_call.get(
-                                            "id",
-                                            "",
-                                        ),
+                                        "content": result_str,
+                                        "tool_call_id": tc_id,
                                     },
                                 )
                             except Exception as e:
+                                logger.exception("[Tool Error] %s | %s", tool_name, e)
                                 messages.append(
                                     {
                                         "role": "tool",
                                         "content": f"Tool error: {e}",
-                                        "tool_call_id": tool_call.get(
-                                            "id",
-                                            "",
-                                        ),
+                                        "tool_call_id": tc_id,
                                     },
                                 )
                         else:
+                            logger.warning("[Tool Unknown] %s", tool_name)
                             messages.append(
                                 {
                                     "role": "tool",
                                     "content": f"Unknown tool: {tool_name}",
-                                    "tool_call_id": tool_call.get("id", ""),
+                                    "tool_call_id": tc_id,
                                 },
                             )
                     continue
 
-                # No tool calls — this is the final response
+                # No structured tool calls — check for text-format tool calls
                 content = (
                     response.content
                     if hasattr(response, "content")
                     else str(response)
                 )
-                self.memory.add_message("assistant", content)
+
+                text_tool_calls = self._parse_text_tool_calls(content)
+                if text_tool_calls:
+                    import json as _json2
+                    logger.info(
+                        "[Text Tool Call] Parsed %d tool call(s) from text output",
+                        len(text_tool_calls),
+                    )
+                    # Build a synthetic assistant message for context
+                    messages.append({"role": "assistant", "content": content})
+
+                    tool_results_text: list[str] = []
+                    for ttc in text_tool_calls:
+                        t_name = ttc["name"]
+                        t_args = ttc["arguments"]
+                        logger.info(
+                            "[Text Tool Call] %s | args=%s", t_name, str(t_args)[:500]
+                        )
+
+                        if t_name in self._tools:
+                            try:
+                                result = self._tools[t_name](**t_args)
+                                result_str = str(result)
+                                logger.info(
+                                    "[Text Tool Result] %s | result=%s",
+                                    t_name,
+                                    result_str[:500],
+                                )
+                            except Exception as e:
+                                logger.exception("[Text Tool Error] %s | %s", t_name, e)
+                                result_str = f"Tool error: {e}"
+                        else:
+                            logger.warning("[Text Tool Unknown] %s", t_name)
+                            result_str = f"Unknown tool: {t_name}"
+
+                        tool_results_text.append(
+                            f"Tool `{t_name}` result:\n{result_str}"
+                        )
+
+                    # Feed tool results back as a user message so model can summarize
+                    combined = "\n\n".join(tool_results_text)
+                    messages.append({"role": "user", "content": combined})
+                    continue
+
+                # Truly final response — no tool calls at all
+                self.memory.add_message("assistant", content, session_id=session_id)
                 return content
 
             except Exception as e:
                 logger.exception("Error in reasoning iteration %d", iteration)
                 error_msg = f"I encountered an error during reasoning: {e}"
-                self.memory.add_message("assistant", error_msg)
+                self.memory.add_message("assistant", error_msg, session_id=session_id)
                 return error_msg
 
         timeout_msg = (
             "I've reached the maximum number of reasoning steps. "
             "Please try breaking your request into smaller parts."
         )
-        self.memory.add_message("assistant", timeout_msg)
+        self.memory.add_message("assistant", timeout_msg, session_id=session_id)
         return timeout_msg
 
     def _build_messages(self) -> list[dict[str, str]]:
@@ -394,3 +491,553 @@ class ScholarAgent:
     def tool_names(self) -> list[str]:
         """Return the names of all registered tools."""
         return sorted(self._tools.keys())
+
+    def _build_tool_schemas(self) -> list[dict[str, Any]]:
+        """Generate OpenAI-compatible tool schemas from registered tools."""
+        import inspect
+
+        schemas: list[dict[str, Any]] = []
+        _TYPE_MAP = {
+            str: "string",
+            int: "integer",
+            float: "number",
+            bool: "boolean",
+            list: "array",
+            dict: "object",
+        }
+
+        for name, func in self._tools.items():
+            try:
+                sig = inspect.signature(func)
+                doc = inspect.getdoc(func) or ""
+                # First line of docstring as description
+                desc = doc.split("\n")[0].strip() if doc else name
+
+                properties: dict[str, Any] = {}
+                required: list[str] = []
+
+                for pname, param in sig.parameters.items():
+                    annotation = param.annotation
+                    # Resolve Optional types
+                    origin = getattr(annotation, "__origin__", None)
+                    if origin is not None:
+                        # e.g. Optional[str] -> str
+                        args = getattr(annotation, "__args__", ())
+                        if type(None) in args:
+                            annotation = next(
+                                (a for a in args if a is not type(None)),
+                                str,
+                            )
+                        else:
+                            annotation = args[0] if args else str
+
+                    json_type = _TYPE_MAP.get(annotation, "string")
+                    prop: dict[str, Any] = {"type": json_type}
+
+                    # Add default value as description hint
+                    if param.default is not inspect.Parameter.empty:
+                        if param.default is not None:
+                            prop["default"] = param.default
+                    else:
+                        required.append(pname)
+
+                    properties[pname] = prop
+
+                schema = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": desc[:1024],
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required,
+                        },
+                    },
+                }
+                schemas.append(schema)
+            except Exception:
+                logger.debug("Could not build schema for tool: %s", name, exc_info=True)
+
+        logger.info("Built %d tool schemas for function calling", len(schemas))
+        return schemas
+
+    @staticmethod
+    def _parse_text_tool_calls(content: str) -> list[dict[str, Any]]:
+        """Parse text-format tool calls from model output.
+
+        Some models don't support structured function calling and instead
+        output tool calls in XML-like text formats such as::
+
+            <FunctionCall> {'tool' => 'name', 'args' => ...} </FunctionCall>
+            <tool_call>{"name": ..., "arguments": ...}</tool_call>
+
+        Returns a list of ``{"name": str, "arguments": dict}`` dicts.
+        """
+        import re
+        import json as _json
+
+        results: list[dict[str, Any]] = []
+
+        # ── Pattern 1a: <FunctionCall><invoke name="..."><parameter ...>...</parameter></invoke></FunctionCall>
+        # Also handles bare <invoke> without outer <FunctionCall> wrapper
+        invoke_blocks = re.findall(
+            r"<invoke\s+name=[\"']([^\"']+)[\"']\s*>(.*?)</invoke>",
+            content,
+            re.DOTALL,
+        )
+        for tool_name, invoke_body in invoke_blocks:
+            tool_name = tool_name.strip()
+            params: dict[str, Any] = {}
+            param_matches = re.findall(
+                r'<parameter\s+name=["\']([^"\']+)["\']>(.*?)</parameter>',
+                invoke_body,
+                re.DOTALL,
+            )
+            for key, val in param_matches:
+                val = val.strip()
+                try:
+                    params[key] = int(val)
+                except ValueError:
+                    try:
+                        params[key] = float(val)
+                    except ValueError:
+                        params[key] = val
+            logger.debug(
+                "[_parse_text_tool_calls] invoke: name=%s, params=%s",
+                tool_name,
+                params,
+            )
+            results.append({"name": tool_name, "arguments": params})
+
+        if results:
+            return results
+
+        # ── Pattern 1b: <FunctionCall> {'tool' => 'name', 'args' => ...} </FunctionCall>
+        fc_blocks = re.findall(
+            r"<FunctionCall>(.*?)</FunctionCall>", content, re.DOTALL
+        )
+        for block in fc_blocks:
+            # Extract tool name (both ' and " quotes, and => or : separators)
+            name_m = re.search(
+                r"""['"]?tool['"]?\s*(?:=>|:)\s*['"]([^'"]+)['"]""",
+                block,
+            )
+            if not name_m:
+                continue
+            tool_name = name_m.group(1).strip()
+
+            params = {}
+
+            # Try extracting <param name="key">value</param>
+            param_matches = re.findall(
+                r'<param\s+name=["\']([^"\']+)["\']>(.*?)</param>',
+                block,
+                re.DOTALL,
+            )
+            for key, val in param_matches:
+                val = val.strip()
+                try:
+                    params[key] = int(val)
+                except ValueError:
+                    try:
+                        params[key] = float(val)
+                    except ValueError:
+                        params[key] = val
+
+            # If no <param> found, try JSON-style args
+            if not params:
+                args_m = re.search(
+                    r"""['"]?args['"]?\s*(?:=>|:)\s*(\{.*\})""",
+                    block,
+                    re.DOTALL,
+                )
+                if args_m:
+                    try:
+                        params = _json.loads(args_m.group(1))
+                    except _json.JSONDecodeError:
+                        # Try python-style dict
+                        try:
+                            import ast
+                            params = ast.literal_eval(args_m.group(1))
+                        except Exception:
+                            pass
+
+            logger.debug(
+                "[_parse_text_tool_calls] FC block: name=%s, params=%s",
+                tool_name,
+                params,
+            )
+            results.append({"name": tool_name, "arguments": params})
+
+        if results:
+            return results
+
+        # ── Pattern 2: <tool_call>{"name": "...", "arguments": {...}}</tool_call> ──
+        tc_blocks = re.findall(
+            r"<tool_call>\s*(.*?)\s*</tool_call>", content, re.DOTALL
+        )
+        for block in tc_blocks:
+            try:
+                data = _json.loads(block)
+                name = data.get("name", "")
+                args = data.get("arguments", {})
+                if name:
+                    results.append({"name": name, "arguments": args})
+            except _json.JSONDecodeError:
+                pass
+
+        if results:
+            return results
+
+        # ── Pattern 3: ```json {"name": "tool_name", "arguments": {...}} ``` ──
+        json_blocks = re.findall(
+            r"```(?:json)?\s*(\{[^`]*?\"name\"\s*:\s*\"[^`]*?\})\s*```",
+            content,
+            re.DOTALL,
+        )
+        for block in json_blocks:
+            try:
+                data = _json.loads(block)
+                name = data.get("name", "")
+                args = data.get("arguments", {})
+                if name:
+                    results.append({"name": name, "arguments": args})
+            except _json.JSONDecodeError:
+                pass
+
+        return results
+
+    # ── Streaming reply ─────────────────────────────────────────────────
+
+    def reply_stream(
+        self,
+        message: str,
+        session_id: str | None = None,
+        **kwargs: Any,
+    ):
+        """Process a user message and yield streaming SSE event dicts.
+
+        Yields dicts with ``type`` key:
+        - ``{"type": "thinking", "content": "..."}``
+        - ``{"type": "content", "content": "..."}``
+        - ``{"type": "tool_call", "name": "...", "arguments": "..."}``
+        - ``{"type": "tool_result", "name": "...", "result": "..."}``
+        - ``{"type": "done", "content": "full text"}``
+        - ``{"type": "error", "content": "..."}``
+        """
+        import json as _json
+
+        # Check for system commands
+        if message.strip().startswith("/"):
+            cmd_result = self.command_handler.handle(message.strip())
+            if cmd_result is not None:
+                yield {"type": "content", "content": cmd_result}
+                yield {"type": "done", "content": cmd_result}
+                return
+
+        # Run pre-reply hooks
+        for hook in self._hooks:
+            if hasattr(hook, "pre_reply"):
+                message = hook.pre_reply(message)
+
+        # Check model
+        if self.model is None:
+            err = (
+                "No LLM model configured. Please run `researchclaw init` "
+                "to set up your model provider."
+            )
+            yield {"type": "error", "content": err}
+            return
+
+        self.memory.add_message("user", message, session_id=session_id)
+        messages = self._build_messages()
+        full_content = ""
+
+        # Prepare tool kwargs for model calls
+        stream_model_kwargs: dict[str, Any] = {}
+        if self._tool_schemas:
+            stream_model_kwargs["tools"] = self._tool_schemas
+
+        for iteration in range(self.max_iters):
+            try:
+                # If model supports streaming, use it
+                if hasattr(self.model, "stream"):
+                    accumulated_content = ""
+                    tool_calls_in_turn: list[dict] = []
+
+                    for event in self.model.stream(messages, **stream_model_kwargs):
+                        etype = event.get("type")
+
+                        if etype == "thinking":
+                            yield event
+
+                        elif etype == "content":
+                            accumulated_content += event["content"]
+                            yield event
+
+                        elif etype == "tool_call":
+                            tool_calls_in_turn.append(event)
+                            yield {
+                                "type": "tool_call",
+                                "name": event["name"],
+                                "arguments": event.get("arguments", ""),
+                            }
+
+                        elif etype == "done":
+                            pass  # handled below
+
+                    # If there were tool calls, execute them
+                    if tool_calls_in_turn:
+                        # Add assistant message with tool calls to messages
+                        assistant_msg: dict[str, Any] = {
+                            "role": "assistant",
+                            "content": accumulated_content or None,
+                            "tool_calls": [
+                                {
+                                    "id": tc.get("id", f"call_{iteration}_{i}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["name"],
+                                        "arguments": tc.get("arguments", "{}"),
+                                    },
+                                }
+                                for i, tc in enumerate(tool_calls_in_turn)
+                            ],
+                        }
+                        messages.append(assistant_msg)
+
+                        for tc in tool_calls_in_turn:
+                            tool_name = tc["name"]
+                            raw_args = tc.get("arguments", "{}")
+                            call_id = tc.get("id", f"call_{iteration}")
+
+                            logger.info(
+                                "[Stream Tool Call] %s | args=%s",
+                                tool_name,
+                                str(raw_args)[:500],
+                            )
+
+                            if tool_name in self._tools:
+                                try:
+                                    tool_args = _json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                                    result = self._tools[tool_name](**tool_args)
+                                    result_str = str(result)
+                                    logger.info(
+                                        "[Stream Tool Result] %s | result=%s",
+                                        tool_name,
+                                        result_str[:500],
+                                    )
+                                except Exception as e:
+                                    logger.exception("[Stream Tool Error] %s | %s", tool_name, e)
+                                    result_str = f"Tool error: {e}"
+                            else:
+                                result_str = f"Unknown tool: {tool_name}"
+
+                            messages.append({
+                                "role": "tool",
+                                "content": result_str,
+                                "tool_call_id": call_id,
+                            })
+
+                            yield {
+                                "type": "tool_result",
+                                "name": tool_name,
+                                "result": result_str[:2000],
+                            }
+
+                        # Continue reasoning loop
+                        continue
+
+                    # No structured tool calls — check text format
+                    logger.debug(
+                        "[Stream] Checking text tool calls in: %s",
+                        accumulated_content[:1000],
+                    )
+                    text_tool_calls = self._parse_text_tool_calls(
+                        accumulated_content
+                    )
+                    if text_tool_calls:
+                        logger.info(
+                            "[Stream Text Tool Call] Parsed %d tool call(s) from text",
+                            len(text_tool_calls),
+                        )
+
+                        # Strip tool-call XML from content shown to user
+                        import re as _re
+                        cleaned = _re.sub(
+                            r"<FunctionCall>.*?</FunctionCall>",
+                            "",
+                            accumulated_content,
+                            flags=_re.DOTALL,
+                        )
+                        cleaned = _re.sub(
+                            r"<invoke\s+name=[\"'][^\"']+[\"']\s*>.*?</invoke>",
+                            "",
+                            cleaned,
+                            flags=_re.DOTALL,
+                        )
+                        cleaned = cleaned.strip()
+
+                        # Tell frontend to replace the displayed content
+                        yield {
+                            "type": "content_replace",
+                            "content": cleaned,
+                        }
+
+                        messages.append(
+                            {"role": "assistant", "content": accumulated_content}
+                        )
+
+                        tool_results_parts: list[str] = []
+                        for ttc in text_tool_calls:
+                            t_name = ttc["name"]
+                            t_args = ttc["arguments"]
+                            logger.info(
+                                "[Stream Text Tool Call] %s | args=%s",
+                                t_name,
+                                str(t_args)[:500],
+                            )
+                            yield {
+                                "type": "tool_call",
+                                "name": t_name,
+                                "arguments": _json.dumps(t_args, ensure_ascii=False),
+                            }
+
+                            if t_name in self._tools:
+                                try:
+                                    result = self._tools[t_name](**t_args)
+                                    result_str = str(result)
+                                    logger.info(
+                                        "[Stream Text Tool Result] %s | result=%s",
+                                        t_name,
+                                        result_str[:500],
+                                    )
+                                except Exception as e:
+                                    logger.exception(
+                                        "[Stream Text Tool Error] %s | %s", t_name, e
+                                    )
+                                    result_str = f"Tool error: {e}"
+                            else:
+                                result_str = f"Unknown tool: {t_name}"
+
+                            yield {
+                                "type": "tool_result",
+                                "name": t_name,
+                                "result": result_str[:2000],
+                            }
+                            tool_results_parts.append(
+                                f"Tool `{t_name}` result:\n{result_str}"
+                            )
+
+                        combined = "\n\n".join(tool_results_parts)
+                        messages.append({"role": "user", "content": combined})
+                        continue
+
+                    # Truly final response
+                    full_content = accumulated_content
+                    break
+
+                else:
+                    # Non-streaming fallback
+                    response = self.model(messages, **stream_model_kwargs)
+
+                    if hasattr(response, "tool_calls") and response.tool_calls:
+                        # Add assistant message with tool_calls
+                        ns_assistant_msg: dict[str, Any] = {
+                            "role": "assistant",
+                            "content": getattr(response, "content", None) or None,
+                            "tool_calls": [],
+                        }
+                        for tc in response.tool_calls:
+                            tc_func = tc.function if hasattr(tc, "function") else tc.get("function", {})
+                            tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
+                            tc_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
+                            tc_args = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "")
+                            ns_assistant_msg["tool_calls"].append({
+                                "id": tc_id,
+                                "type": "function",
+                                "function": {"name": tc_name, "arguments": tc_args},
+                            })
+                        messages.append(ns_assistant_msg)
+
+                        for tool_call in response.tool_calls:
+                            tc_func = tool_call.function if hasattr(tool_call, "function") else tool_call.get("function", {})
+                            tc_id = tool_call.id if hasattr(tool_call, "id") else tool_call.get("id", "")
+                            tool_name = tc_func.name if hasattr(tc_func, "name") else tc_func.get("name", "")
+                            tool_args_raw = tc_func.arguments if hasattr(tc_func, "arguments") else tc_func.get("arguments", "{}")
+
+                            logger.info(
+                                "[Stream Fallback Tool Call] %s | args=%s",
+                                tool_name,
+                                str(tool_args_raw)[:500],
+                            )
+
+                            yield {
+                                "type": "tool_call",
+                                "name": tool_name,
+                                "arguments": str(tool_args_raw),
+                            }
+
+                            if tool_name in self._tools:
+                                try:
+                                    tool_args = _json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+                                    result = self._tools[tool_name](**tool_args)
+                                    result_str = str(result)
+                                    logger.info(
+                                        "[Stream Fallback Tool Result] %s | result=%s",
+                                        tool_name,
+                                        result_str[:500],
+                                    )
+                                except Exception as e:
+                                    logger.exception("[Stream Fallback Tool Error] %s | %s", tool_name, e)
+                                    result_str = f"Tool error: {e}"
+                            else:
+                                logger.warning("[Stream Fallback Tool Unknown] %s", tool_name)
+                                result_str = f"Unknown tool: {tool_name}"
+
+                            messages.append({
+                                "role": "tool",
+                                "content": result_str,
+                                "tool_call_id": tc_id,
+                            })
+
+                            yield {
+                                "type": "tool_result",
+                                "name": tool_name,
+                                "result": result_str[:2000],
+                            }
+
+                        continue
+
+                    content = (
+                        response.content
+                        if hasattr(response, "content")
+                        else str(response)
+                    )
+                    full_content = content
+                    yield {"type": "content", "content": content}
+                    break
+
+            except Exception as e:
+                logger.exception("Error in streaming iteration %d", iteration)
+                err = f"I encountered an error during reasoning: {e}"
+                self.memory.add_message("assistant", err, session_id=session_id)
+                yield {"type": "error", "content": err}
+                return
+
+        else:
+            # Reached max_iters
+            full_content = (
+                "I've reached the maximum number of reasoning steps. "
+                "Please try breaking your request into smaller parts."
+            )
+            yield {"type": "content", "content": full_content}
+
+        self.memory.add_message("assistant", full_content, session_id=session_id)
+        yield {"type": "done", "content": full_content}
+
+        # Run post-reply hooks
+        for hook in self._hooks:
+            if hasattr(hook, "post_reply"):
+                hook.post_reply(message, full_content)
