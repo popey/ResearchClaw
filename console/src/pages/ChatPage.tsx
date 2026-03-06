@@ -1,4 +1,11 @@
-import { useMemo, useRef, useEffect, useState, useCallback } from "react";
+import {
+  useMemo,
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  useSyncExternalStore,
+} from "react";
 import type { ChangeEvent, KeyboardEvent } from "react";
 import {
   MessageSquare,
@@ -17,52 +24,23 @@ import {
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useSearchParams } from "react-router-dom";
-import { getSessionDetail, getSessions, streamChat } from "../api";
-import type { ChatMessage, SessionItem, StreamEvent, ToolCallInfo } from "../types";
+import { getSessionDetail, getSessions } from "../api";
+import type { ChatMessage, SessionItem, ToolCallInfo } from "../types";
 import { preprocessMarkdown } from "../utils/markdown";
-
-const CHAT_STATE_STORAGE_KEY = "researchclaw.chat.state.v1";
-
-type PersistedChatState = {
-  sessionId?: string;
-  messages?: ChatMessage[];
-};
-
-function createSessionId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `chat-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-}
+import {
+  getChatRuntimeState,
+  replaceChatConversation,
+  sendChatMessage,
+  startNewConversation,
+  stopChatStreaming,
+  subscribeChatRuntime,
+} from "../chatRuntime";
 
 function normalizeChatRole(value: unknown): ChatMessage["role"] {
   if (value === "user" || value === "assistant" || value === "tool") {
     return value;
   }
   return "assistant";
-}
-
-function loadPersistedChatState(): PersistedChatState {
-  try {
-    const raw = localStorage.getItem(CHAT_STATE_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as PersistedChatState;
-    if (!parsed || typeof parsed !== "object") return {};
-    return {
-      sessionId:
-        typeof parsed.sessionId === "string" ? parsed.sessionId : undefined,
-      messages: Array.isArray(parsed.messages)
-        ? parsed.messages.filter(
-            (m) =>
-              m
-              && typeof m === "object"
-              && typeof (m as ChatMessage).content === "string",
-          )
-        : [],
-    };
-  } catch {
-    return {};
-  }
 }
 
 function formatTs(ts?: number): string {
@@ -74,24 +52,24 @@ function formatTs(ts?: number): string {
 
 export default function ChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [messages, setMessages] = useState<ChatMessage[]>(
-    () => loadPersistedChatState().messages || [],
+  const chatState = useSyncExternalStore(
+    subscribeChatRuntime,
+    getChatRuntimeState,
+    getChatRuntimeState,
   );
+  const {
+    messages,
+    sessionId,
+    chatLoading,
+    streamContent,
+    streamThinking,
+    streamToolCalls,
+  } = chatState;
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [sessionId, setSessionId] = useState<string | undefined>(
-    () => loadPersistedChatState().sessionId,
-  );
-  const [chatLoading, setChatLoading] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const hydratedSessionRef = useRef<string>("");
-
-  // Current streaming state (for the in-progress assistant message)
-  const [streamContent, setStreamContent] = useState("");
-  const [streamThinking, setStreamThinking] = useState("");
-  const [streamToolCalls, setStreamToolCalls] = useState<ToolCallInfo[]>([]);
 
   const canSend = useMemo(
     () => chatInput.trim().length > 0 && !chatLoading,
@@ -111,17 +89,28 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    const payload: PersistedChatState = { sessionId, messages };
-    localStorage.setItem(CHAT_STATE_STORAGE_KEY, JSON.stringify(payload));
-  }, [messages, sessionId]);
-
-  useEffect(() => {
     void loadSessionList();
   }, [loadSessionList]);
+
+  const prevLoadingRef = useRef(chatLoading);
+  useEffect(() => {
+    if (prevLoadingRef.current && !chatLoading) {
+      void loadSessionList();
+    }
+    prevLoadingRef.current = chatLoading;
+  }, [chatLoading, loadSessionList]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamContent, streamThinking, streamToolCalls]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (querySessionId === sessionId) return;
+    syncQuerySession(sessionId);
+    // Keep URL and active session aligned while ChatPage is mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, querySessionId]);
 
   useEffect(() => {
     const targetSessionId = querySessionId || sessionId;
@@ -145,8 +134,9 @@ export default function ChatPage() {
           role: normalizeChatRole(m?.role),
           content: String(m?.content ?? ""),
         }));
-        setSessionId(targetSessionId);
-        setMessages(restored);
+        replaceChatConversation(targetSessionId, restored, {
+          stopStreaming: false,
+        });
       })
       .catch(() => {});
 
@@ -154,12 +144,6 @@ export default function ChatPage() {
       cancelled = true;
     };
   }, [messages.length, querySessionId, sessionId]);
-
-  const resetStream = useCallback(() => {
-    setStreamContent("");
-    setStreamThinking("");
-    setStreamToolCalls([]);
-  }, []);
 
   function syncQuerySession(nextSessionId?: string) {
     const next = new URLSearchParams(searchParams);
@@ -172,47 +156,19 @@ export default function ChatPage() {
   }
 
   function handleStop() {
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-    }
-    const finalContent = streamContent || "(已停止)";
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        content: finalContent,
-        thinking: streamThinking || undefined,
-        toolCalls: streamToolCalls.length ? [...streamToolCalls] : undefined,
-      },
-    ]);
-    resetStream();
-    setChatLoading(false);
+    stopChatStreaming();
   }
 
   function onNewConversation() {
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-    }
-    setChatLoading(false);
+    startNewConversation();
     setChatInput("");
-    setMessages([]);
-    setSessionId(undefined);
     hydratedSessionRef.current = "";
-    resetStream();
-    localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
     syncQuerySession(undefined);
   }
 
   async function onOpenSession(targetSessionId: string) {
     if (!targetSessionId) return;
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-      setChatLoading(false);
-      resetStream();
-    }
+    if (chatLoading) stopChatStreaming();
     syncQuerySession(targetSessionId);
     if (targetSessionId === sessionId && messages.length > 0) return;
     try {
@@ -224,9 +180,8 @@ export default function ChatPage() {
         role: normalizeChatRole(m?.role),
         content: String(m?.content ?? ""),
       }));
-      setSessionId(targetSessionId);
       hydratedSessionRef.current = targetSessionId;
-      setMessages(restored);
+      replaceChatConversation(targetSessionId, restored);
     } catch {
       // Ignore and keep current UI state.
     }
@@ -235,122 +190,15 @@ export default function ChatPage() {
   function onSendChat() {
     const text = chatInput.trim();
     if (!text || chatLoading) return;
-    const activeSessionId = sessionId || createSessionId();
-    if (!sessionId) {
-      setSessionId(activeSessionId);
-      hydratedSessionRef.current = activeSessionId;
+    const activeSessionId = sendChatMessage(text, {
+      preferredSessionId: sessionId,
+    });
+    if (!activeSessionId) return;
+    hydratedSessionRef.current = activeSessionId;
+    if (searchParams.get("session_id") !== activeSessionId) {
       syncQuerySession(activeSessionId);
     }
-
-    setChatLoading(true);
-    resetStream();
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
     setChatInput("");
-
-    let accContent = "";
-    let accThinking = "";
-    let accToolCalls: ToolCallInfo[] = [];
-
-    const controller = streamChat(text, activeSessionId, (event: StreamEvent) => {
-      if (event.session_id) {
-        setSessionId(event.session_id);
-        hydratedSessionRef.current = event.session_id;
-        if (searchParams.get("session_id") !== event.session_id) {
-          syncQuerySession(event.session_id);
-        }
-      }
-
-      switch (event.type) {
-        case "thinking":
-          accThinking += event.content || "";
-          setStreamThinking(accThinking);
-          break;
-
-        case "content":
-          accContent += event.content || "";
-          setStreamContent(accContent);
-          break;
-
-        case "content_replace":
-          accContent = event.content || "";
-          setStreamContent(accContent);
-          break;
-
-        case "tool_call":
-          accToolCalls = [
-            ...accToolCalls,
-            {
-              name: event.name || "unknown",
-              arguments: event.arguments,
-              status: "running",
-            },
-          ];
-          setStreamToolCalls([...accToolCalls]);
-          break;
-
-        case "tool_result": {
-          const idx = accToolCalls.findIndex(
-            (tc) => tc.name === event.name && tc.status === "running",
-          );
-          if (idx !== -1) {
-            accToolCalls[idx] = {
-              ...accToolCalls[idx],
-              result: event.result,
-              status: "done",
-            };
-          } else {
-            accToolCalls.push({
-              name: event.name || "unknown",
-              result: event.result,
-              status: "done",
-            });
-          }
-          setStreamToolCalls([...accToolCalls]);
-          break;
-        }
-
-        case "done": {
-          const finalContent = event.content || accContent;
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: finalContent,
-              thinking: accThinking || undefined,
-              toolCalls: accToolCalls.length ? accToolCalls : undefined,
-            },
-          ]);
-          resetStream();
-          setChatLoading(false);
-          abortRef.current = null;
-          void loadSessionList();
-          break;
-        }
-
-        case "error": {
-          const errText = String(event.content || "unknown error");
-          const mergedContent = accContent.trim()
-            ? `${accContent}\n\n[流式中断] ${errText}`
-            : `错误: ${errText}`;
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: mergedContent,
-              thinking: accThinking || undefined,
-              toolCalls: accToolCalls.length ? accToolCalls : undefined,
-            },
-          ]);
-          resetStream();
-          setChatLoading(false);
-          abortRef.current = null;
-          void loadSessionList();
-          break;
-        }
-      }
-    });
-
-    abortRef.current = controller;
   }
 
   return (
