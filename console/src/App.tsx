@@ -13,7 +13,6 @@ import {
   Settings,
   Cpu,
   KeyRound,
-  Beaker,
 } from "lucide-react";
 import ChatPage from "./pages/ChatPage";
 import PapersPage from "./pages/PapersPage";
@@ -193,10 +192,18 @@ export default function App() {
         <div className="brand">
           <div className="brand-title">
             <div className="brand-logo">
-              <Beaker size={20} />
+              <img
+                src="/symbol.png"
+                alt="ResearchClaw Symbol"
+                className="brand-symbol-img"
+              />
             </div>
             <div>
-              <h1>ResearchClaw</h1>
+              <img
+                src="/logo.png"
+                alt="ResearchClaw"
+                className="brand-wordmark-img"
+              />
               <p>Scholar Console</p>
             </div>
           </div>

@@ -1,6 +1,5 @@
 import React, {
   createContext,
-  isValidElement,
   useCallback,
   useContext,
   useEffect,
@@ -285,57 +284,117 @@ export function useI18n(): I18nContextValue {
   return ctx;
 }
 
-const TEXT_PROP_KEYS = new Set([
-  "children",
+const TRANSLATABLE_ATTRS = [
   "placeholder",
   "title",
   "aria-label",
   "alt",
-]);
+  "data-tooltip",
+] as const;
+const ORIGINAL_TEXT_NODES = new WeakMap<Text, string>();
+const ORIGINAL_ATTRS = new WeakMap<Element, Record<string, string>>();
 
-function translateNode(
-  node: React.ReactNode,
-  t: (text: string) => string,
-): React.ReactNode {
-  if (node == null || typeof node === "boolean" || typeof node === "number") {
-    return node;
-  }
-  if (typeof node === "string") {
-    return t(node);
-  }
-  if (Array.isArray(node)) {
-    return node.map((item) => translateNode(item, t));
-  }
-  if (!isValidElement(node)) {
-    return node;
-  }
+function _is_skippable_text_node(node: Text): boolean {
+  const parent = node.parentElement;
+  if (!parent) return true;
 
-  const props = (node.props || {}) as Record<string, unknown>;
-  const nextProps: Record<string, unknown> = {};
-  let changed = false;
+  const tag = parent.tagName.toLowerCase();
+  if (tag === "script" || tag === "style" || tag === "noscript") return true;
+  if (parent.closest("textarea, input, code, pre")) return true;
+  if (parent.isContentEditable) return true;
+  return false;
+}
 
-  for (const [key, value] of Object.entries(props)) {
-    if (key === "children") {
-      const nextChildren = translateNode(value as React.ReactNode, t);
-      nextProps[key] = nextChildren;
-      if (nextChildren !== value) changed = true;
-      continue;
+function _apply_text_translations(root: HTMLElement, locale: Locale): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let cur = walker.nextNode();
+  while (cur) {
+    const node = cur as Text;
+    const raw = node.nodeValue ?? "";
+    if (raw.trim() && !_is_skippable_text_node(node)) {
+      if (!ORIGINAL_TEXT_NODES.has(node)) {
+        ORIGINAL_TEXT_NODES.set(node, raw);
+      }
+      const original = ORIGINAL_TEXT_NODES.get(node) ?? raw;
+      const next =
+        locale === "en" ? translateText("en", original) : original;
+      if (node.nodeValue !== next) {
+        node.nodeValue = next;
+      }
     }
-    if (typeof value === "string" && TEXT_PROP_KEYS.has(key)) {
-      const translated = t(value);
-      nextProps[key] = translated;
-      if (translated !== value) changed = true;
-      continue;
-    }
-    nextProps[key] = value;
+    cur = walker.nextNode();
   }
+}
 
-  if (!changed) return node;
-  return React.cloneElement(node, nextProps);
+function _apply_attr_translations(root: HTMLElement, locale: Locale): void {
+  const selector = TRANSLATABLE_ATTRS.map((x) => `[${x}]`).join(",");
+  if (!selector) return;
+
+  root.querySelectorAll(selector).forEach((el) => {
+    let record = ORIGINAL_ATTRS.get(el);
+    if (!record) {
+      record = {};
+      ORIGINAL_ATTRS.set(el, record);
+    }
+
+    for (const attr of TRANSLATABLE_ATTRS) {
+      const value = el.getAttribute(attr);
+      if (value == null) continue;
+      if (!(attr in record)) {
+        record[attr] = value;
+      }
+      const original = record[attr] ?? value;
+      const next =
+        locale === "en" ? translateText("en", original) : original;
+      if (value !== next) {
+        el.setAttribute(attr, next);
+      }
+    }
+  });
+}
+
+function _apply_dom_translations(root: HTMLElement, locale: Locale): void {
+  _apply_text_translations(root, locale);
+  _apply_attr_translations(root, locale);
 }
 
 export function AutoTranslate({ children }: { children: React.ReactNode }) {
-  const { t } = useI18n();
-  const tr = useCallback((text: string) => t(text), [t]);
-  return <>{translateNode(children, tr)}</>;
+  const { locale } = useI18n();
+
+  useEffect(() => {
+    const root = document.getElementById("root");
+    if (!root) return () => {};
+
+    let rafId: number | null = null;
+    const run = () => {
+      rafId = null;
+      _apply_dom_translations(root, locale);
+    };
+
+    run();
+
+    const observer = new MutationObserver(() => {
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = requestAnimationFrame(run);
+    });
+
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: [...TRANSLATABLE_ATTRS],
+    });
+
+    return () => {
+      observer.disconnect();
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, [locale]);
+
+  return <>{children}</>;
 }
