@@ -7,6 +7,8 @@ the Semantic Scholar Academic Graph API.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,56 @@ _PAPER_FIELDS = [
     "publicationDate",
     "tldr",
 ]
+
+_SEMANTIC_SCHOLAR_BASE = "https://api.semanticscholar.org/graph/v1"
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except Exception:
+        return 0.0
+
+
+def _semantic_scholar_get(
+    path: str,
+    *,
+    params: dict[str, Any],
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    import httpx
+
+    headers = {
+        "User-Agent": "ResearchClaw/1.0",
+    }
+    api_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+    if api_key:
+        headers["x-api-key"] = api_key
+
+    max_attempts = 4
+    backoff_base = 1.5
+
+    with httpx.Client(timeout=timeout, headers=headers) as client:
+        for attempt in range(max_attempts):
+            resp = client.get(f"{_SEMANTIC_SCHOLAR_BASE}{path}", params=params)
+
+            if resp.status_code == 429 and attempt < max_attempts - 1:
+                retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
+                sleep_s = retry_after if retry_after > 0 else backoff_base * (2**attempt)
+                time.sleep(min(max(1.0, sleep_s), 20.0))
+                continue
+
+            if resp.status_code >= 500 and attempt < max_attempts - 1:
+                time.sleep(min(backoff_base * (2**attempt), 12.0))
+                continue
+
+            resp.raise_for_status()
+            return resp.json()
+
+    # Should never reach here because raise_for_status() is called above.
+    return {}
 
 
 def semantic_scholar_search(
@@ -57,9 +109,7 @@ def semantic_scholar_search(
         List of paper metadata dicts.
     """
     try:
-        import httpx
-
-        max_results = min(max_results, 100)
+        max_results = max(1, min(int(max_results or 10), 100))
 
         params: dict[str, Any] = {
             "query": query,
@@ -74,13 +124,11 @@ def semantic_scholar_search(
         if min_citation_count > 0:
             params["minCitationCount"] = min_citation_count
 
-        resp = httpx.get(
-            "https://api.semanticscholar.org/graph/v1/paper/search",
+        data = _semantic_scholar_get(
+            "/paper/search",
             params=params,
-            timeout=30,
+            timeout=30.0,
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         results = []
         for paper in data.get("data", []):
@@ -122,6 +170,16 @@ def semantic_scholar_search(
             {"error": "httpx package not installed. Run: pip install httpx"},
         ]
     except Exception as e:
+        if "429" in str(e):
+            return [
+                {
+                    "error": (
+                        "Semantic Scholar is rate-limiting requests (HTTP 429). "
+                        "Please retry later, reduce request frequency, or configure "
+                        "SEMANTIC_SCHOLAR_API_KEY for higher quota."
+                    ),
+                },
+            ]
         logger.exception("Semantic Scholar search failed")
         return [{"error": f"Semantic Scholar search failed: {e}"}]
 
@@ -142,16 +200,12 @@ def semantic_scholar_get_paper(paper_id: str) -> dict[str, Any]:
         Detailed paper information.
     """
     try:
-        import httpx
-
         fields = ",".join(_PAPER_FIELDS + ["citations", "references"])
-        resp = httpx.get(
-            f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}",
+        paper = _semantic_scholar_get(
+            f"/paper/{paper_id}",
             params={"fields": fields},
-            timeout=30,
+            timeout=30.0,
         )
-        resp.raise_for_status()
-        paper = resp.json()
 
         authors = [a.get("name", "") for a in paper.get("authors", [])]
 
@@ -205,18 +259,14 @@ def semantic_scholar_citations(
         List of citing paper metadata.
     """
     try:
-        import httpx
-
-        resp = httpx.get(
-            f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}/citations",
+        data = _semantic_scholar_get(
+            f"/paper/{paper_id}/citations",
             params={
                 "fields": "title,authors,year,venue,citationCount,url",
-                "limit": min(max_results, 100),
+                "limit": min(max(max_results, 1), 100),
             },
-            timeout=30,
+            timeout=30.0,
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         return [
             {
