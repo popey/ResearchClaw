@@ -32,13 +32,15 @@ ResearchClaw is an AI research assistant that runs on **your own machine**. Buil
 ### Installation
 
 ```bash
-pip install researchclaw
+pip install -e ".[dev]"
 ```
+
+Run this in the repository root directory.
 
 ### Initialize
 
 ```bash
-researchclaw init --defaults
+researchclaw init --defaults --accept-security
 ```
 
 This sets up your working directory (`~/.researchclaw`) and configures your LLM provider.
@@ -184,3 +186,5 @@ Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 ResearchClaw's channel, scheduling, and console interaction design are inspired by the architecture of [CoPaw](https://github.com/agentscope-ai/CoPaw).  
 Thanks to the CoPaw project for providing a practical and well-validated reference implementation.
+
+![微信二维码](imgs/wx.jpg)
