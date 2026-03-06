@@ -139,3 +139,23 @@ export type ProviderItem = {
   enabled?: boolean;
   extra?: Record<string, unknown>;
 };
+
+export type WorkspaceFileItem = {
+  path: string;
+  category: string;
+  required?: boolean;
+  exists: boolean;
+  editable: boolean;
+  size?: number;
+  modified_at?: string | null;
+};
+
+export type WorkspaceFileContent = {
+  exists: boolean;
+  path: string;
+  abs_path?: string;
+  editable: boolean;
+  size?: number;
+  modified_at?: string;
+  content: string;
+};

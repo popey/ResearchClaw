@@ -31,8 +31,13 @@ from ..constant import (
     JOBS_FILE,
     WORKING_DIR,
 )
+from ..envs import load_envs_into_environ
+from ..utils.logging import add_researchclaw_file_handler
 
 logger = logging.getLogger(__name__)
+
+# Ensure persisted envs are applied before service components boot.
+load_envs_into_environ()
 
 # Fix common MIME types
 mimetypes.add_type("application/javascript", ".js")
@@ -108,6 +113,7 @@ def _build_channel_runtime_config(raw_config: dict[str, Any]) -> Any:
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown."""
     logger.info("ResearchClaw v%s starting up...", __version__)
+    add_researchclaw_file_handler(Path(WORKING_DIR) / "researchclaw.log")
 
     # Ensure working directory exists
     os.makedirs(WORKING_DIR, exist_ok=True)
@@ -342,7 +348,17 @@ _router_defs: list[tuple[str, str, list[str]]] = [
     ("researchclaw.app.routers.console", "/api/console", ["Console"]),
     ("researchclaw.app.routers.control", "/api/control", ["Control"]),
     ("researchclaw.app.routers.envs", "/api/envs", ["Environments"]),
+    (
+        "researchclaw.app.routers.local_models",
+        "/api",
+        ["LocalModels"],
+    ),
     ("researchclaw.app.routers.mcp", "/api/mcp", ["MCP"]),
+    (
+        "researchclaw.app.routers.ollama_models",
+        "/api",
+        ["OllamaModels"],
+    ),
     ("researchclaw.app.routers.papers", "/api/papers", ["Papers"]),
     ("researchclaw.app.routers.providers", "/api/providers", ["Providers"]),
     ("researchclaw.app.routers.skills", "/api/skills", ["Skills"]),

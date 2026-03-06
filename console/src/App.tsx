@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   MessageSquare,
   FileText,
@@ -86,6 +86,8 @@ const navSections: NavSection[] = [
 ];
 
 export default function App() {
+  const location = useLocation();
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -131,7 +133,7 @@ export default function App() {
 
       <main className="content">
         <ConsoleCronBubble />
-        <Routes>
+        <Routes location={location} key={location.pathname}>
           <Route path="/" element={<ChatPage />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/papers" element={<PapersPage />} />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Puzzle, RefreshCw } from "lucide-react";
 import {
   listSkills,
@@ -20,6 +20,10 @@ export default function SkillsPage() {
     setLoaded(true);
   }
 
+  useEffect(() => {
+    void onLoad();
+  }, []);
+
   async function onToggle(skillName: string, isActive: boolean) {
     if (isActive) {
       await disableSkill(skillName);
@@ -33,7 +37,7 @@ export default function SkillsPage() {
     <div className="panel">
       <PageHeader
         title="技能管理"
-        description="启用或禁用 Agent 的各项技能"
+        description="启用或禁用 Agent 技能（同时影响聊天与 task_type=agent 的定时任务）"
         actions={
           <button onClick={onLoad}>
             <RefreshCw size={15} />

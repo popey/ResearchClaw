@@ -8,7 +8,7 @@ from typing import Dict, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from researchclaw.envs import EnvStore
+from researchclaw.envs import delete_env_var, load_envs, save_envs
 
 router = APIRouter()
 
@@ -22,17 +22,11 @@ _DEFAULT_PROFILE = "default"
 
 
 def _load_default_vars() -> dict[str, str]:
-    store = EnvStore()
-    profile = store.get(_DEFAULT_PROFILE) or {
-        "name": _DEFAULT_PROFILE,
-        "vars": {},
-    }
-    return dict(profile.get("vars", {}))
+    return load_envs()
 
 
 def _save_default_vars(vars_map: dict[str, str]) -> None:
-    store = EnvStore()
-    store.save({"name": _DEFAULT_PROFILE, "vars": vars_map})
+    save_envs(vars_map)
 
 
 @router.get("", response_model=List[EnvVar])
@@ -69,8 +63,6 @@ async def delete_env(key: str) -> List[EnvVar]:
             detail=f"Env var '{key}' not found",
         )
 
-    envs.pop(key)
-    _save_default_vars(envs)
-    os.environ.pop(key, None)
+    envs = delete_env_var(key)
 
     return [EnvVar(key=k, value=v) for k, v in sorted(envs.items())]

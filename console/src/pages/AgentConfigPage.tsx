@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { Settings, Download, Save, SlidersHorizontal } from "lucide-react";
 import { getAgentRunningConfig, updateAgentRunningConfig } from "../api";
@@ -17,6 +17,10 @@ export default function AgentConfigPage() {
     setConfig(await getAgentRunningConfig());
     setLoaded(true);
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   async function onSave() {
     setSaving(true);

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 
 from .models import CronJobSpec
 
@@ -24,6 +24,118 @@ class CronExecutor:
     def __init__(self, *, runner: Any, channel_manager: Any):
         self._runner = runner
         self._channel_manager = channel_manager
+
+    @staticmethod
+    def _extract_text_from_content_items(items: Iterable[Any]) -> str:
+        parts: list[str] = []
+        for item in items:
+            if isinstance(item, dict):
+                t = str(item.get("type", "")).lower()
+                if t == "text":
+                    text = str(item.get("text", "") or "").strip()
+                    if text:
+                        parts.append(text)
+                continue
+            t = str(getattr(item, "type", "") or "").lower()
+            if t == "text":
+                text = str(getattr(item, "text", "") or "").strip()
+                if text:
+                    parts.append(text)
+        return "\n".join(parts).strip()
+
+    def _extract_event_text(self, event: Any) -> str:
+        """Extract textual content from a runner event."""
+        if event is None:
+            return ""
+
+        if isinstance(event, dict):
+            # SSE-style done/content events
+            event_type = str(event.get("type", "")).lower()
+            if event_type in {"content", "done", "content_replace"}:
+                return str(event.get("content", "") or "").strip()
+
+            data = event.get("data")
+            if isinstance(data, dict):
+                content = data.get("content")
+                if isinstance(content, list):
+                    return self._extract_text_from_content_items(content)
+            return ""
+
+        # Event-like object from stream_query adapter
+        obj = str(getattr(event, "object", "") or "").lower()
+        status = str(getattr(event, "status", "") or "").lower()
+        ev_type = str(getattr(event, "type", "") or "").lower()
+        if obj == "message" and status == "completed" and ev_type == "content":
+            data = getattr(event, "data", None)
+            content = getattr(data, "content", None) if data is not None else None
+            if isinstance(content, list):
+                return self._extract_text_from_content_items(content)
+        return ""
+
+    async def _save_console_result_as_new_chat(
+        self,
+        *,
+        job: CronJobSpec,
+        result_text: str,
+    ) -> None:
+        """Persist console cron output as a new chat session."""
+        if str(job.dispatch.channel or "").lower() != "console":
+            return
+        if not result_text.strip():
+            return
+
+        session_manager = getattr(self._runner, "session_manager", None)
+        if session_manager is None:
+            return
+
+        title = f"[Cron] {job.name}"
+        try:
+            session = session_manager.create_session(title=title)
+            prompt_text = ""
+            if job.task_type == "agent" and job.request is not None:
+                inp = job.request.model_dump(mode="json").get("input") or []
+                if isinstance(inp, list) and inp:
+                    first = inp[0] if isinstance(inp[0], dict) else {}
+                    contents = (
+                        first.get("content")
+                        if isinstance(first, dict)
+                        else []
+                    ) or []
+                    if isinstance(contents, list):
+                        prompt_parts: list[str] = []
+                        for c in contents:
+                            if isinstance(c, dict) and str(c.get("type", "")).lower() == "text":
+                                txt = str(c.get("text", "") or "").strip()
+                                if txt:
+                                    prompt_parts.append(txt)
+                        prompt_text = "\n".join(prompt_parts).strip()
+
+            if prompt_text:
+                session.add_message(
+                    "user",
+                    f"[定时任务: {job.name}]\n{prompt_text}",
+                )
+            else:
+                session.add_message("user", f"[定时任务触发] {job.name}")
+
+            session.add_message("assistant", result_text.strip())
+            # Persist updates after appending messages.
+            session_manager._save_session(session)  # noqa: SLF001
+            # Keep chats.json in sync when chat manager is attached.
+            chat_manager = getattr(self._runner, "_chat_manager", None)  # noqa: SLF001
+            if chat_manager is not None and hasattr(chat_manager, "get_or_create_chat"):
+                await chat_manager.get_or_create_chat(
+                    session_id=session.session_id,
+                    user_id=job.dispatch.target.user_id or "cron",
+                    channel="console",
+                    name=title,
+                )
+        except Exception:
+            logger.debug(
+                "save console cron result as chat failed: job_id=%s",
+                job.id,
+                exc_info=True,
+            )
 
     async def execute(self, job: CronJobSpec) -> None:
         """Execute one job once.
@@ -62,6 +174,10 @@ class CronExecutor:
                 text=job.text.strip(),
                 meta=dispatch_meta,
             )
+            await self._save_console_result_as_new_chat(
+                job=job,
+                result_text=job.text.strip(),
+            )
             return
 
         # agent: run request as the dispatch target user
@@ -74,6 +190,7 @@ class CronExecutor:
         req: Dict[str, Any] = job.request.model_dump(mode="json")
         req["user_id"] = target_user_id or "cron"
         req["session_id"] = target_session_id or f"cron:{job.id}"
+        result_chunks: list[str] = []
 
         async def _run() -> None:
             async for event in self._runner.stream_query(req):
@@ -84,5 +201,12 @@ class CronExecutor:
                     event=event,
                     meta=dispatch_meta,
                 )
+                text = self._extract_event_text(event)
+                if text:
+                    result_chunks.append(text)
 
         await asyncio.wait_for(_run(), timeout=job.runtime.timeout_seconds)
+        await self._save_console_result_as_new_chat(
+            job=job,
+            result_text="\n".join(result_chunks).strip(),
+        )

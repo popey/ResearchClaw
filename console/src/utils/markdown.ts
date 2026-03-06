@@ -1,0 +1,37 @@
+/**
+ * Strip YAML frontmatter from the beginning of markdown text.
+ */
+export const stripFrontmatter = (s: string): string =>
+  s.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+
+/**
+ * Normalize common malformed table outputs from LLMs so remark-gfm can render.
+ *
+ * Typical malformed shape:
+ * | h1 | h2 | |----|----| | a | b |
+ */
+export function normalizeMarkdownTables(input: string): string {
+  if (!input) return "";
+
+  let text = input.replace(/\r\n/g, "\n").replace(/｜/g, "|");
+
+  // Split collapsed table rows that are accidentally emitted on one line.
+  // Example: "| a | b | |---|---| | 1 | 2 |" -> multi-line rows.
+  for (let i = 0; i < 10; i += 1) {
+    const next = text.replace(/(\|[^\n]*?\|)\s+(?=\|)/g, "$1\n");
+    if (next === text) break;
+    text = next;
+  }
+
+  // Ensure a blank line before table blocks to help markdown parsers.
+  text = text.replace(/([^\n])\n(\|[^\n]*\|\n\|[-:|\s]+\|)/g, "$1\n\n$2");
+
+  return text;
+}
+
+/**
+ * End-to-end markdown cleanup before rendering.
+ */
+export function preprocessMarkdown(input: string): string {
+  return normalizeMarkdownTables(stripFrontmatter(input || ""));
+}

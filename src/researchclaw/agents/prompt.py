@@ -122,7 +122,7 @@ def build_system_prompt_from_working_dir() -> str:
 
 
 def build_bootstrap_guidance(language: str = "en") -> str:
-    """Return first-run guidance that helps the user configure Scholar.
+    """Return first-run bootstrap guidance.
 
     Parameters
     ----------
@@ -131,22 +131,24 @@ def build_bootstrap_guidance(language: str = "en") -> str:
     """
     if language.startswith("zh"):
         return (
-            "你好！我是 **Scholar**，你的 AI 科研助手。🔬\n\n"
-            "在开始之前，我想了解一些关于你的信息：\n\n"
-            "1. **你的研究领域**是什么？（例如：机器学习、生物信息学、量子物理）\n"
-            "2. **你目前的研究方向**是什么？\n"
-            "3. 你希望我用**中文**还是**英文**与你交流？\n"
-            "4. 你有**常用的论文数据库偏好**吗？（ArXiv / Semantic Scholar / Google Scholar）\n"
-            "5. 你是否有**正在进行的项目**需要我帮助追踪？\n\n"
-            "你可以随时通过编辑 `~/.researchclaw/PROFILE.md` 来更新你的偏好。"
+            "# 🌟 引导模式已激活\n\n"
+            "**你现在处于首次运行引导阶段。**\n\n"
+            "工作目录里存在 `BOOTSTRAP.md`，你应先按引导建立协作关系，再进入常规问答。\n\n"
+            "请按下面顺序执行：\n"
+            "1. 阅读并遵循 `BOOTSTRAP.md` 的步骤，先和用户完成初次沟通。\n"
+            "2. 协助用户完善关键文件：`PROFILE.md`、`SOUL.md`、`AGENTS.md`、`HEARTBEAT.md`。\n"
+            "3. 引导用户确认语言、研究方向、沟通偏好与任务节奏。\n"
+            "4. 引导完成后，提醒用户可删除 `BOOTSTRAP.md`（或在工作区手动维护）。\n\n"
+            "如果用户明确要求跳过引导，就继续回答用户当前问题。"
         )
     return (
-        "Hello! I'm **Scholar**, your AI research assistant. 🔬\n\n"
-        "Before we begin, I'd like to learn a few things about you:\n\n"
-        "1. What is your **research field**? (e.g., Machine Learning, Bioinformatics, Quantum Physics)\n"
-        "2. What are your **current research interests**?\n"
-        "3. Which **language** do you prefer for our conversations?\n"
-        "4. Do you have a **preferred paper database**? (ArXiv / Semantic Scholar / Google Scholar)\n"
-        "5. Do you have any **ongoing projects** you'd like me to help track?\n\n"
-        "You can update your preferences anytime by editing `~/.researchclaw/PROFILE.md`."
+        "# 🌟 Bootstrap Mode Activated\n\n"
+        "**You are in first-run onboarding mode.**\n\n"
+        "A `BOOTSTRAP.md` file exists in the workspace. Guide the user through onboarding before regular Q&A.\n\n"
+        "Please follow this order:\n"
+        "1. Read and follow the steps in `BOOTSTRAP.md`.\n"
+        "2. Help the user complete key files: `PROFILE.md`, `SOUL.md`, `AGENTS.md`, `HEARTBEAT.md`.\n"
+        "3. Confirm language, research areas, collaboration preferences, and cadence.\n"
+        "4. After onboarding, remind the user they can remove `BOOTSTRAP.md`.\n\n"
+        "If the user explicitly wants to skip onboarding, proceed with their current request."
     )

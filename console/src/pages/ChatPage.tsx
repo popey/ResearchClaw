@@ -15,9 +15,11 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useSearchParams } from "react-router-dom";
 import { getSessionDetail, getSessions, streamChat } from "../api";
 import type { ChatMessage, SessionItem, StreamEvent, ToolCallInfo } from "../types";
+import { preprocessMarkdown } from "../utils/markdown";
 
 const CHAT_STATE_STORAGE_KEY = "researchclaw.chat.state.v1";
 
@@ -25,6 +27,13 @@ type PersistedChatState = {
   sessionId?: string;
   messages?: ChatMessage[];
 };
+
+function createSessionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `chat-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
 
 function normalizeChatRole(value: unknown): ChatMessage["role"] {
   if (value === "user" || value === "assistant" || value === "tool") {
@@ -77,6 +86,7 @@ export default function ChatPage() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const hydratedSessionRef = useRef<string>("");
 
   // Current streaming state (for the in-progress assistant message)
   const [streamContent, setStreamContent] = useState("");
@@ -114,11 +124,18 @@ export default function ChatPage() {
   }, [messages, streamContent, streamThinking, streamToolCalls]);
 
   useEffect(() => {
-    if (!querySessionId) return;
-    if (querySessionId === sessionId && messages.length > 0) return;
+    const targetSessionId = querySessionId || sessionId;
+    if (!targetSessionId) return;
+    if (querySessionId && querySessionId === sessionId && messages.length > 0) {
+      return;
+    }
+    // Keep in-memory messages while navigating tabs; only hydrate when needed.
+    if (!querySessionId && messages.length > 0) return;
+    if (targetSessionId === hydratedSessionRef.current) return;
+    hydratedSessionRef.current = targetSessionId;
 
     let cancelled = false;
-    void getSessionDetail(querySessionId)
+    void getSessionDetail(targetSessionId)
       .then((detail) => {
         if (cancelled) return;
         const sessionMessages = Array.isArray(detail?.messages)
@@ -128,7 +145,7 @@ export default function ChatPage() {
           role: normalizeChatRole(m?.role),
           content: String(m?.content ?? ""),
         }));
-        setSessionId(querySessionId);
+        setSessionId(targetSessionId);
         setMessages(restored);
       })
       .catch(() => {});
@@ -182,6 +199,7 @@ export default function ChatPage() {
     setChatInput("");
     setMessages([]);
     setSessionId(undefined);
+    hydratedSessionRef.current = "";
     resetStream();
     localStorage.removeItem(CHAT_STATE_STORAGE_KEY);
     syncQuerySession(undefined);
@@ -207,6 +225,7 @@ export default function ChatPage() {
         content: String(m?.content ?? ""),
       }));
       setSessionId(targetSessionId);
+      hydratedSessionRef.current = targetSessionId;
       setMessages(restored);
     } catch {
       // Ignore and keep current UI state.
@@ -216,6 +235,12 @@ export default function ChatPage() {
   function onSendChat() {
     const text = chatInput.trim();
     if (!text || chatLoading) return;
+    const activeSessionId = sessionId || createSessionId();
+    if (!sessionId) {
+      setSessionId(activeSessionId);
+      hydratedSessionRef.current = activeSessionId;
+      syncQuerySession(activeSessionId);
+    }
 
     setChatLoading(true);
     resetStream();
@@ -226,9 +251,10 @@ export default function ChatPage() {
     let accThinking = "";
     let accToolCalls: ToolCallInfo[] = [];
 
-    const controller = streamChat(text, sessionId, (event: StreamEvent) => {
+    const controller = streamChat(text, activeSessionId, (event: StreamEvent) => {
       if (event.session_id) {
         setSessionId(event.session_id);
+        hydratedSessionRef.current = event.session_id;
         if (searchParams.get("session_id") !== event.session_id) {
           syncQuerySession(event.session_id);
         }
@@ -473,9 +499,10 @@ export default function ChatPage() {
 
 function MessageContent({ content }: { content: string }) {
   if (!content) return null;
+  const normalized = preprocessMarkdown(content);
   return (
     <div className="msg-text markdown-body">
-      <Markdown>{content}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm]}>{normalized}</Markdown>
     </div>
   );
 }

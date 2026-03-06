@@ -16,6 +16,7 @@ def copy_md_files(
     language: str,
     skip_existing: bool = False,
     target_dir: Optional[str] = None,
+    include_bootstrap: bool = True,
 ) -> list[str]:
     """Copy md files from agents/md_files to working directory.
 
@@ -23,6 +24,7 @@ def copy_md_files(
         language: Language code (e.g. 'en', 'zh')
         skip_existing: If True, skip files that already exist in working dir.
         target_dir: Override target directory. Defaults to WORKING_DIR.
+        include_bootstrap: Whether to include BOOTSTRAP.md in copied files.
 
     Returns:
         List of copied file names.
@@ -51,6 +53,8 @@ def copy_md_files(
     # Copy all .md files to working directory
     copied_files: list[str] = []
     for md_file in md_files_dir.glob("*.md"):
+        if not include_bootstrap and md_file.name.upper() == "BOOTSTRAP.MD":
+            continue
         target_file = working_dir / md_file.name
         if skip_existing and target_file.exists():
             logger.debug("Skipped existing md file: %s", md_file.name)

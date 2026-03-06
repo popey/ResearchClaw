@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Radio, RefreshCw, Wifi } from "lucide-react";
 import { getChannels } from "../api";
 import type { ChannelItem } from "../types";
@@ -12,6 +12,10 @@ export default function ChannelsPage() {
     setChannels(await getChannels());
     setLoaded(true);
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   return (
     <div className="panel">

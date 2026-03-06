@@ -1,21 +1,202 @@
-"""Persistent store for model providers."""
+"""Persistent store for model providers with legacy migration support."""
 
 from __future__ import annotations
 
 import json
+import logging
+import os
+import shutil
 from pathlib import Path
-
-from researchclaw.constant import WORKING_DIR
+from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from .models import ProviderConfig
 
+logger = logging.getLogger(__name__)
+
+_BOOTSTRAP_WORKING_DIR = (
+    Path(os.environ.get("RESEARCHCLAW_WORKING_DIR", "~/.researchclaw"))
+    .expanduser()
+    .resolve()
+)
+_BOOTSTRAP_SECRET_DIR = (
+    Path(
+        os.environ.get(
+            "RESEARCHCLAW_SECRET_DIR",
+            f"{_BOOTSTRAP_WORKING_DIR}.secret",
+        ),
+    )
+    .expanduser()
+    .resolve()
+)
+
+_PROVIDERS_JSON = _BOOTSTRAP_SECRET_DIR / "providers.json"
+_LEGACY_PROVIDERS_JSON_CANDIDATES = (
+    Path(__file__).resolve().parent / "providers.json",
+    _BOOTSTRAP_WORKING_DIR / "providers.json",
+)
+
+_ALLOWED_PROVIDER_TYPES = {
+    "openai",
+    "anthropic",
+    "ollama",
+    "dashscope",
+    "deepseek",
+    "other",
+    "custom",
+}
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def _chmod_best_effort(path: Path, mode: int) -> None:
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def _prepare_secret_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _chmod_best_effort(path.parent, 0o700)
+
+
+def _migrate_legacy_providers_json(path: Path) -> None:
+    """Copy old providers.json into secret dir once (best effort)."""
+    if path.is_file():
+        return
+    if path.exists() and not path.is_file():
+        logger.error(
+            "providers.json path exists but is not a regular file: %s",
+            path,
+        )
+        return
+
+    for legacy in _LEGACY_PROVIDERS_JSON_CANDIDATES:
+        if not legacy.is_file() or _same_path(legacy, path):
+            continue
+        try:
+            _prepare_secret_parent(path)
+            shutil.copy2(legacy, path)
+            _chmod_best_effort(path, 0o600)
+            return
+        except OSError as exc:
+            logger.warning(
+                "Failed to migrate legacy providers.json from %s: %s",
+                legacy,
+                exc,
+            )
+
+
+def get_providers_json_path() -> Path:
+    """Return canonical providers.json path under SECRET_DIR."""
+    return _PROVIDERS_JSON
+
+
+def _normalize_ollama_base_url(base_url: str) -> str:
+    value = (base_url or "").strip()
+    if not value:
+        return value
+
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+
+    path = parts.path or ""
+    if path in ("", "/"):
+        path = "/v1"
+    elif path == "/v1/":
+        path = "/v1"
+
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def _base_url_to_ollama_host(base_url: str) -> Optional[str]:
+    value = (base_url or "").strip().rstrip("/")
+    if not value:
+        return None
+    if value.endswith("/v1"):
+        value = value[:-3]
+    return value or None
+
+
+def get_ollama_host() -> Optional[str]:
+    """Return configured Ollama host URL (without /v1), or ``None``."""
+    store = ProviderStore()
+    # Prefer active provider if it is ollama.
+    active = store.get_active_provider()
+    if active and active.provider_type == "ollama":
+        return _base_url_to_ollama_host(active.base_url)
+
+    # Fallback to first configured ollama provider.
+    for item in store._load():
+        if item.provider_type == "ollama":
+            return _base_url_to_ollama_host(item.base_url)
+    return None
+
+
+def _normalize_provider_dict(data: dict[str, Any]) -> dict[str, Any]:
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("provider name cannot be empty")
+
+    provider_type = str(data.get("provider_type", "other") or "other").strip().lower()
+    if provider_type not in _ALLOWED_PROVIDER_TYPES:
+        provider_type = "other"
+
+    model_name = str(data.get("model_name", "") or "").strip()
+    api_key = str(data.get("api_key", "") or "").strip()
+    base_url = str(data.get("base_url", "") or "").strip()
+    if provider_type == "ollama" and base_url:
+        base_url = _normalize_ollama_base_url(base_url)
+
+    enabled = bool(data.get("enabled", False))
+    extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
+
+    return {
+        "name": name,
+        "provider_type": provider_type,
+        "model_name": model_name,
+        "api_key": api_key,
+        "base_url": base_url,
+        "enabled": enabled,
+        "extra": extra,
+    }
+
+
+def _normalize_raw(raw: Any) -> list[dict[str, Any]]:
+    """Normalize persisted payload to list[provider-dict]."""
+    if isinstance(raw, list):
+        out: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                out.append(_normalize_provider_dict(item))
+            except ValueError:
+                continue
+        return out
+
+    # Legacy format: {"providers": [...]}.
+    if isinstance(raw, dict) and isinstance(raw.get("providers"), list):
+        return _normalize_raw(raw.get("providers"))
+
+    return []
+
 
 class ProviderStore:
-    """Stores provider configurations in working directory."""
+    """Stores provider configurations in JSON."""
 
     def __init__(self, file_path: str | None = None):
-        self.file_path = Path(
-            file_path or (Path(WORKING_DIR) / "providers.json"),
+        default_path = get_providers_json_path()
+        self.file_path = (
+            Path(file_path).expanduser().resolve() if file_path else default_path
         )
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -30,18 +211,26 @@ class ProviderStore:
 
     def save_provider(self, provider: dict) -> None:
         items = self._load()
-        config = ProviderConfig.from_dict(provider)
+        data = _normalize_provider_dict(provider)
+        config = ProviderConfig.from_dict(data)
+
         replaced = False
         for idx, item in enumerate(items):
             if item.name == config.name:
-                # preserve enabled status unless explicitly provided
                 if "enabled" not in provider:
                     config.enabled = item.enabled
                 items[idx] = config
                 replaced = True
                 break
+
         if not replaced:
             items.append(config)
+
+        # If new provider explicitly enabled, disable others.
+        if config.enabled:
+            for item in items:
+                item.enabled = item.name == config.name
+
         self._save(items)
 
     def update_provider_settings(
@@ -49,21 +238,32 @@ class ProviderStore:
         name: str,
         settings: dict,
     ) -> ProviderConfig:
-        """Update fields of an existing provider (partial update)."""
         items = self._load()
         for idx, item in enumerate(items):
-            if item.name == name:
-                data = item.to_dict()
-                data.update(settings)
-                data["name"] = name  # name is immutable
-                updated = ProviderConfig.from_dict(data)
-                items[idx] = updated
-                self._save(items)
-                return updated
+            if item.name != name:
+                continue
+
+            data = item.to_dict()
+            merged = dict(data)
+            merged.update(settings)
+            merged["name"] = name
+            normalized = _normalize_provider_dict(merged)
+            normalized["enabled"] = bool(merged.get("enabled", item.enabled))
+
+            updated = ProviderConfig.from_dict(normalized)
+            items[idx] = updated
+
+            if updated.enabled:
+                for other in items:
+                    if other.name != name:
+                        other.enabled = False
+
+            self._save(items)
+            return updated
+
         raise KeyError(name)
 
     def set_enabled(self, name: str) -> ProviderConfig:
-        """Set a provider as the active one; disable all others."""
         items = self._load()
         found = False
         for item in items:
@@ -76,7 +276,6 @@ class ProviderStore:
         return next(i for i in items if i.name == name)
 
     def set_disabled(self, name: str) -> ProviderConfig:
-        """Disable a provider without enabling any other."""
         items = self._load()
         for item in items:
             if item.name == name:
@@ -86,7 +285,6 @@ class ProviderStore:
         raise KeyError(name)
 
     def get_active_provider(self) -> ProviderConfig | None:
-        """Return the currently enabled provider, or None."""
         for item in self._load():
             if item.enabled:
                 return item
@@ -100,12 +298,37 @@ class ProviderStore:
         self._save(new_items)
 
     def _load(self) -> list[ProviderConfig]:
+        if self.file_path == get_providers_json_path():
+            _migrate_legacy_providers_json(self.file_path)
+
+        if self.file_path.exists() and not self.file_path.is_file():
+            logger.error(
+                "providers.json path exists but is not a regular file: %s",
+                self.file_path,
+            )
+            return []
+
         if not self.file_path.exists():
             return []
-        data = json.loads(self.file_path.read_text(encoding="utf-8"))
-        return [ProviderConfig.from_dict(item) for item in data]
+
+        try:
+            raw = json.loads(self.file_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            return []
+
+        return [ProviderConfig.from_dict(p) for p in _normalize_raw(raw)]
 
     def _save(self, items: list[ProviderConfig]) -> None:
+        if self.file_path.exists() and not self.file_path.is_file():
+            raise IsADirectoryError(
+                f"providers.json path exists but is not a regular file: {self.file_path}",
+            )
+
+        if self.file_path == get_providers_json_path():
+            _prepare_secret_parent(self.file_path)
+        else:
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
+
         self.file_path.write_text(
             json.dumps(
                 [item.to_dict() for item in items],
@@ -114,3 +337,6 @@ class ProviderStore:
             ),
             encoding="utf-8",
         )
+
+        if self.file_path == get_providers_json_path():
+            _chmod_best_effort(self.file_path, 0o600)

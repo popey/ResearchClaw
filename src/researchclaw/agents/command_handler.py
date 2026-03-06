@@ -7,6 +7,7 @@ Processes ``/``-prefixed commands such as ``/new``, ``/compact``, ``/clear``,
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -57,6 +58,10 @@ class CommandHandler:
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
+        daemon_result = self._handle_daemon_command_if_any(message.strip())
+        if daemon_result is not None:
+            return daemon_result
+
         if cmd in self._commands:
             try:
                 return self._commands[cmd](args)
@@ -65,6 +70,49 @@ class CommandHandler:
                 return f"⚠️ Error executing command `{cmd}`. Check logs for details."
 
         return None  # Not a command — continue normal processing
+
+    def _handle_daemon_command_if_any(self, message: str) -> Optional[str]:
+        """Handle /daemon-style runtime commands."""
+        from researchclaw.app.runner.daemon_commands import (
+            DaemonContext,
+            parse_daemon_query,
+            run_daemon_logs,
+            run_daemon_reload_config,
+            run_daemon_status,
+            run_daemon_version,
+        )
+
+        parsed = parse_daemon_query(message)
+        if parsed is None:
+            return None
+
+        sub, args = parsed
+        context = DaemonContext(
+            working_dir=Path(self.agent.working_dir),
+            memory_manager=getattr(self.agent, "memory", None),
+            restart_callback=None,
+        )
+
+        if sub == "status":
+            return run_daemon_status(context)
+        if sub == "reload-config":
+            return run_daemon_reload_config(context)
+        if sub == "version":
+            return run_daemon_version(context)
+        if sub == "logs":
+            n = 100
+            for a in args:
+                if a.isdigit():
+                    n = max(1, min(int(a), 2000))
+                    break
+            return run_daemon_logs(context, lines=n)
+
+        # restart in chat path currently requires app-managed callback.
+        return (
+            "**Restart**\n\n"
+            "- Chat command path does not own app lifecycle. "
+            "Use `researchclaw daemon restart` or restart the process."
+        )
 
     # ── Commands ────────────────────────────────────────────────────────
 
@@ -174,5 +222,7 @@ class CommandHandler:
             "| `/papers` | List recently discussed papers |\n"
             "| `/refs` | Show reference library summary |\n"
             "| `/compact_str` | Show current memory summary |\n"
+            "| `/daemon status` | Show runtime daemon status |\n"
+            "| `/daemon logs [n]` | Tail daemon logs |\n"
             "| `/help` | Show this help message |"
         )

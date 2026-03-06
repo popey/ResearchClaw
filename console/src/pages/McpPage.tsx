@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { Cable, RefreshCw, Plus, Trash2 } from "lucide-react";
 import {
@@ -22,6 +22,10 @@ export default function McpPage() {
     setClients(await listMcpClients());
     setLoaded(true);
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   async function onCreate() {
     if (!newKey.trim()) return;

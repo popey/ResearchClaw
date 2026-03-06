@@ -1,5 +1,5 @@
 """Provider management package."""
 
-from researchclaw.providers.store import ProviderStore
+from .store import ProviderStore, get_ollama_host
 
-__all__ = ["ProviderStore"]
+__all__ = ["ProviderStore", "get_ollama_host"]

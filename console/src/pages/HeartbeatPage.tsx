@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Heart, RefreshCw } from "lucide-react";
 import { getHeartbeat } from "../api";
 import { PageHeader, EmptyState } from "../components/ui";
@@ -11,6 +11,10 @@ export default function HeartbeatPage() {
     setHeartbeat(await getHeartbeat());
     setLoaded(true);
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   return (
     <div className="panel">

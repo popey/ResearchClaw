@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -8,8 +8,16 @@ import {
   Clock,
   RefreshCw,
   Zap,
+  Puzzle,
+  Heart,
 } from "lucide-react";
-import { getHealth, getStatus, getControlStatus } from "../api";
+import {
+  getHealth,
+  getStatus,
+  getControlStatus,
+  listActiveSkills,
+  getHeartbeat,
+} from "../api";
 import { PageHeader, StatCard } from "../components/ui";
 
 export default function StatusPage() {
@@ -17,6 +25,8 @@ export default function StatusPage() {
   const [agentName, setAgentName] = useState<string>("-");
   const [running, setRunning] = useState<boolean>(false);
   const [toolCount, setToolCount] = useState<number>(0);
+  const [activeSkills, setActiveSkills] = useState<number>(0);
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState<boolean>(false);
   const [control, setControl] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
@@ -43,8 +53,26 @@ export default function StatusPage() {
     } catch {
       setControl(null);
     }
+
+    try {
+      const active = await listActiveSkills();
+      setActiveSkills(active.length);
+    } catch {
+      setActiveSkills(0);
+    }
+
+    try {
+      const hb = await getHeartbeat();
+      setHeartbeatEnabled(Boolean(hb?.enabled));
+    } catch {
+      setHeartbeatEnabled(false);
+    }
     setLoading(false);
   }
+
+  useEffect(() => {
+    void onRefreshStatus();
+  }, []);
 
   return (
     <div className="panel">
@@ -85,6 +113,18 @@ export default function StatusPage() {
           value={toolCount}
           icon={<Wrench size={20} />}
           variant="info"
+        />
+        <StatCard
+          label="激活技能"
+          value={activeSkills}
+          icon={<Puzzle size={20} />}
+          variant="warning"
+        />
+        <StatCard
+          label="Heartbeat"
+          value={heartbeatEnabled ? "启用" : "关闭"}
+          icon={<Heart size={20} />}
+          variant={heartbeatEnabled ? "success" : "danger"}
         />
       </div>
 

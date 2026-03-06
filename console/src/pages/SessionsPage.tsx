@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   MessageCircle,
   RefreshCw,
@@ -30,6 +30,10 @@ export default function SessionsPage() {
     setSessions(await getSessions());
     setLoaded(true);
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   async function onOpen(sessionId: string) {
     setSelected(await getSessionDetail(sessionId));

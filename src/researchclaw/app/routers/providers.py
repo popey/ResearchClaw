@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,7 @@ class ProviderConfig(BaseModel):
     base_url: str | None = None
     model_name: str | None = None
     enabled: bool = False
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProviderSettingsUpdate(BaseModel):
@@ -33,6 +35,17 @@ class ProviderSettingsUpdate(BaseModel):
     base_url: str | None = None
     model_name: str | None = None
     extra: dict[str, Any] | None = None
+
+
+class ProviderTestResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class DiscoverModelsResponse(BaseModel):
+    success: bool
+    message: str
+    models: list[dict[str, str]] = Field(default_factory=list)
 
 
 def _mask(providers: list[dict]) -> list[dict]:
@@ -238,3 +251,132 @@ async def list_available_models():
             ],
             "note": "Default model list (provider store not initialized)",
         }
+
+
+def _safe_join_url(base_url: str, suffix: str) -> str:
+    value = (base_url or "").rstrip("/")
+    return f"{value}{suffix}"
+
+
+@router.post("/{name}/test", response_model=ProviderTestResponse)
+async def test_provider(name: str):
+    """Lightweight provider connectivity/config test."""
+    try:
+        from researchclaw.providers.store import ProviderStore
+
+        store = ProviderStore()
+        provider = store.get_provider(name)
+        if provider is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Provider '{name}' not found",
+            )
+
+        ptype = (provider.provider_type or "").lower()
+        base_url = provider.base_url or ""
+
+        if ptype != "ollama" and not provider.api_key:
+            return ProviderTestResponse(
+                success=False,
+                message="API key is empty",
+            )
+
+        # Quick network probe when base_url is available.
+        if base_url:
+            probe_url = (
+                _safe_join_url(base_url, "/models")
+                if ptype != "ollama"
+                else _safe_join_url(base_url.replace("/v1", ""), "/api/tags")
+            )
+            req = UrlRequest(probe_url, method="GET")
+            if provider.api_key and ptype != "ollama":
+                req.add_header("Authorization", f"Bearer {provider.api_key}")
+            try:
+                with urlopen(req, timeout=6) as resp:  # nosec - user config URL
+                    if 200 <= resp.status < 500:
+                        return ProviderTestResponse(
+                            success=True,
+                            message=f"Connected ({resp.status})",
+                        )
+            except URLError as exc:
+                return ProviderTestResponse(
+                    success=False,
+                    message=f"Connection failed: {exc}",
+                )
+            except Exception as exc:
+                return ProviderTestResponse(
+                    success=False,
+                    message=f"Probe error: {exc}",
+                )
+
+        return ProviderTestResponse(
+            success=True,
+            message="Configuration looks valid",
+        )
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )
+
+
+@router.post("/{name}/discover-models", response_model=DiscoverModelsResponse)
+async def discover_models(name: str):
+    """Discover candidate models for a provider."""
+    try:
+        from researchclaw.providers.store import ProviderStore
+
+        store = ProviderStore()
+        provider = store.get_provider(name)
+        if provider is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Provider '{name}' not found",
+            )
+
+        ptype = (provider.provider_type or "").lower()
+        if ptype == "ollama":
+            try:
+                from researchclaw.providers.ollama_manager import OllamaModelManager
+                from researchclaw.providers.store import get_ollama_host
+
+                models = [
+                    {"name": m.name, "provider": "ollama"}
+                    for m in OllamaModelManager.list_models(
+                        host=get_ollama_host(),
+                    )
+                ]
+                return DiscoverModelsResponse(
+                    success=True,
+                    message=f"Discovered {len(models)} models from Ollama",
+                    models=models,
+                )
+            except Exception as exc:
+                return DiscoverModelsResponse(
+                    success=False,
+                    message=f"Ollama discovery failed: {exc}",
+                    models=[],
+                )
+
+        # Fallback to static registry list for remote providers.
+        from researchclaw.providers.registry import ModelRegistry
+
+        models = [
+            item
+            for item in ModelRegistry().list_models()
+            if str(item.get("provider", "")).lower() == ptype
+        ]
+        return DiscoverModelsResponse(
+            success=True,
+            message=f"Returned {len(models)} built-in model suggestions",
+            models=models,
+        )
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Provider store not available",
+        )

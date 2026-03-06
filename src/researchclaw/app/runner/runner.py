@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from researchclaw.constant import WORKING_DIR
@@ -43,6 +44,28 @@ class AgentRunner:
                 config = model_config or {}
                 from researchclaw.agents import ScholarAgent
 
+                working_dir = config.get("working_dir") or WORKING_DIR
+                try:
+                    from researchclaw.agents.utils import copy_md_files
+                    from researchclaw.config import load_config
+
+                    cfg = load_config(Path(working_dir) / "config.json")
+                    language = str(cfg.get("language", "en") or "en").strip().lower()
+                    include_bootstrap = not (Path(working_dir) / ".bootstrap_completed").exists()
+                    copied = copy_md_files(
+                        language="zh" if language.startswith("zh") else "en",
+                        skip_existing=True,
+                        target_dir=str(working_dir),
+                        include_bootstrap=include_bootstrap,
+                    )
+                    if copied:
+                        logger.info(
+                            "Initialized workspace md files: %s",
+                            ", ".join(copied),
+                        )
+                except Exception:
+                    logger.debug("Workspace md init skipped", exc_info=True)
+
                 llm_cfg = {
                     "model_type": config.get("provider", "openai_chat"),
                     "model_name": config.get("model_name", "gpt-4o"),
@@ -53,7 +76,7 @@ class AgentRunner:
 
                 self.agent = ScholarAgent(
                     llm_cfg=llm_cfg,
-                    working_dir=config.get("working_dir") or WORKING_DIR,
+                    working_dir=working_dir,
                 )
                 self._last_model_config = dict(config)
                 await self._attach_mcp_clients_if_any()
@@ -118,6 +141,11 @@ class AgentRunner:
         """
         if not self.agent:
             raise RuntimeError("Agent is not running")
+        try:
+            if hasattr(self.agent, "rebuild_sys_prompt"):
+                self.agent.rebuild_sys_prompt()
+        except Exception:
+            logger.debug("rebuild_sys_prompt failed before chat", exc_info=True)
 
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
@@ -140,6 +168,14 @@ class AgentRunner:
         """
         if not self.agent:
             raise RuntimeError("Agent is not running")
+        try:
+            if hasattr(self.agent, "rebuild_sys_prompt"):
+                self.agent.rebuild_sys_prompt()
+        except Exception:
+            logger.debug(
+                "rebuild_sys_prompt failed before chat_stream",
+                exc_info=True,
+            )
 
         import queue
         import threading

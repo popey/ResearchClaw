@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { KeyRound, Download, Save, RefreshCw } from "lucide-react";
 import { listEnvVars, saveEnvVars } from "../api";
@@ -15,6 +15,10 @@ export default function EnvironmentsPage() {
     setText(lines.join("\n"));
     setLoaded(true);
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   async function onSave() {
     setSaving(true);

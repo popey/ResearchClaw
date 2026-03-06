@@ -20,6 +20,11 @@ WORKING_DIR: str = os.environ.get(
     str(Path.home() / ".researchclaw"),
 )
 
+SECRET_DIR: str = os.environ.get(
+    "RESEARCHCLAW_SECRET_DIR",
+    str(Path(f"{WORKING_DIR}.secret")),
+)
+
 # ── Core data files (relative to WORKING_DIR) ──────────────────────────────
 
 JOBS_FILE: str = os.environ.get("RESEARCHCLAW_JOBS_FILE", "jobs.json")

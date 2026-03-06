@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import {
   Server,
@@ -85,6 +85,10 @@ export default function ModelsPage() {
       setError(e?.message || "加载失败");
     }
   }
+
+  useEffect(() => {
+    void onLoad();
+  }, []);
 
   // ── Add new provider ────────────────────────────────────────────────────
 

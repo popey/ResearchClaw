@@ -11,6 +11,8 @@ import type {
   SessionItem,
   SkillItem,
   StreamEvent,
+  WorkspaceFileContent,
+  WorkspaceFileItem,
 } from "./types";
 
 export async function getHealth(): Promise<{ status: string }> {
@@ -342,6 +344,41 @@ export async function getWorkspaceProfile(): Promise<{
   const res = await fetch("/api/workspace/profile");
   if (!res.ok) throw new Error("Workspace profile failed");
   return res.json();
+}
+
+export async function listWorkspaceFiles(): Promise<WorkspaceFileItem[]> {
+  const res = await fetch("/api/workspace/files");
+  if (!res.ok) throw new Error("Workspace files request failed");
+  const data = await res.json();
+  return Array.isArray(data?.files) ? data.files : [];
+}
+
+export async function getWorkspaceRelations(): Promise<any> {
+  const res = await fetch("/api/workspace/relations");
+  if (!res.ok) throw new Error("Workspace relations request failed");
+  return res.json();
+}
+
+export async function getWorkspaceFileContent(
+  path: string,
+): Promise<WorkspaceFileContent> {
+  const res = await fetch(
+    `/api/workspace/file?path=${encodeURIComponent(path)}`,
+  );
+  if (!res.ok) throw new Error("Workspace file read failed");
+  return res.json();
+}
+
+export async function saveWorkspaceFileContent(
+  path: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch("/api/workspace/file", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!res.ok) throw new Error("Workspace file save failed");
 }
 
 export async function listSkills(): Promise<SkillItem[]> {
