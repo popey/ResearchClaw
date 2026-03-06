@@ -193,14 +193,14 @@ export default function App() {
           <div className="brand-title">
             <div className="brand-logo">
               <img
-                src="/symbol.png"
+                src="/researchclaw-symbol.png"
                 alt="ResearchClaw Symbol"
                 className="brand-symbol-img"
               />
             </div>
             <div>
               <img
-                src="/logo.png"
+                src="/researchclaw-logo.png"
                 alt="ResearchClaw"
                 className="brand-wordmark-img"
               />

@@ -1,12 +1,12 @@
 /**
- * ResearchClaw branding logo (logo.png).
+ * ResearchClaw branding icon (symbol).
  */
 interface LogoIconProps {
   size: number;
   className?: string;
 }
 
-const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
+const LOGO_SRC = `${import.meta.env.BASE_URL}researchclaw-symbol.png`;
 
 export function LogoIcon({ size, className = "" }: LogoIconProps) {
   return (
