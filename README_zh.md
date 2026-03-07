@@ -53,6 +53,34 @@ researchclaw app
 
 在浏览器中打开 [http://127.0.0.1:8088/](http://127.0.0.1:8088/)。
 
+### 前端（Console）开发
+
+先启动后端：
+
+```bash
+researchclaw app
+```
+
+在另一个终端启动前端开发服务器：
+
+```bash
+cd console
+npm install
+npm run dev
+```
+
+然后打开 Vite 地址（通常是 [http://localhost:5173](http://localhost:5173)）。
+前端开发服务器会将 `/api` 请求代理到 `http://127.0.0.1:8088`。
+
+构建生产前端资源：
+
+```bash
+cd console
+npm run build
+```
+
+当 `console/dist` 存在时，后端会自动托管该目录。
+
 ### 一键安装
 
 ```bash

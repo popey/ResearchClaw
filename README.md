@@ -53,6 +53,34 @@ researchclaw app
 
 Open [http://127.0.0.1:8088/](http://127.0.0.1:8088/) in your browser.
 
+### Frontend (Console) Development
+
+Run backend first:
+
+```bash
+researchclaw app
+```
+
+In another terminal, start the frontend dev server:
+
+```bash
+cd console
+npm install
+npm run dev
+```
+
+Then open the Vite URL (usually [http://localhost:5173](http://localhost:5173)).
+The frontend dev server proxies `/api` requests to `http://127.0.0.1:8088`.
+
+To build production frontend assets:
+
+```bash
+cd console
+npm run build
+```
+
+`console/dist` will be served automatically by the backend when available.
+
 ### One-liner Install
 
 ```bash
