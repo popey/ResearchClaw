@@ -1,132 +1,154 @@
-# GitHub Issue Draft: ResearchClaw 全流程科研（CLI 对话式）路线图
+# ResearchClaw 路线图
 
-> 建议 Issue 标题  
-`[Roadmap] 实现科研全流程 CLI 对话化：从文献调研到实验与写作`
+## 定位
 
-## 背景
+ResearchClaw 不是“只在终端里跑命令”的工具集合，而是：
 
-目标是让 ResearchClaw 支持科研论文完整流程，仅通过命令行/对话完成主要工作：
+- 一个可被 IM 控制的个人科研 Agent 工作台
+- 交互入口以 IM/Console 为主，CLI 负责初始化、配置、运维
+- 参考 CoPaw/OpenClaw 的运行范式：多通道接入 + 常驻运行 + 定时任务 + 可扩展 Skills/MCP
 
-1. 文献调研与筛选  
-2. 问题提出与假设形成  
-3. 实验设计与执行  
-4. 统计验证与消融分析  
-5. 论文写作与迭代修改  
-6. 复现材料打包与提交前检查
+一句话目标：  
+**用户在 IM 中下达任务，Agent 持续推进文献调研、问题提出、实验执行、写作产出，并把关键进展主动推送回来。**
 
-## 总目标（Definition of Success）
+## 北极星场景
 
-- 用户可在终端完成从 topic 到 draft/package 的端到端流程。
-- 核心步骤均有明确 CLI 命令、结构化产物和可追溯记录。
-- 实验可重放、结论可追证、写作可回链到实验与引用证据。
+用户在飞书发送：
 
-## 产品原则
+1. “帮我调研 diffusion model 在医学分割的最新进展，给出空白点”
+2. “基于空白点给 3 个可验证假设，选风险最低的一个”
+3. “开始实验，今晚给我 baseline + ablation 结果”
+4. “按论文结构起草方法和实验章节，附引用”
 
-- CLI-first：每个核心步骤必须有显式命令。  
-- Traceable：关键决策和结果必须结构化落盘。  
-- Reproducible：实验结果可基于配置和元数据重放。  
-- Human-in-the-loop：关键节点要求用户确认。  
-- Local-first：数据隐私与模型控制权优先。  
+Agent 能在同一会话持续推进，并通过 IM/Console 回传阶段性产物与告警。
 
-## 目标命令面（V1）
+## 目标交互模型（IM 主、CLI 辅）
 
-```bash
-# A. 文献调研
-researchclaw survey search "topic"
-researchclaw survey triage --from saved_results
-researchclaw survey map --topic "..." --out evidence_matrix.md
+### IM 层（主入口）
 
-# B. 问题提出
-researchclaw propose gap --from evidence_matrix.md
-researchclaw propose question --gap G1
-researchclaw propose hypothesis --question Q1
+- 自然语言任务驱动
+- 轻量控制指令（示例）：
+  - `/plan`
+  - `/status`
+  - `/pause`
+  - `/resume`
+  - `/deliver`
+  - `/evidence`
 
-# C. 实验验证
-researchclaw exp design --hypothesis H1
-researchclaw exp run --plan EXP-001
-researchclaw exp analyze --run RUN-001
-researchclaw exp ablation --run RUN-001
+### CLI 层（控制面）
 
-# D. 论文写作
-researchclaw write draft --template conference
-researchclaw write revise --mode reviewer2
-researchclaw write export --format latex
+- 初始化与配置：`researchclaw init`, `researchclaw channels config`
+- 运维与诊断：`researchclaw daemon`, `researchclaw cron`, `researchclaw channels list`
+- 本地开发与调试：`researchclaw app` + console dev server
 
-# E. 提交前检查
-researchclaw submit check
-researchclaw submit package --out submission_bundle/
-```
+## 架构路线（对齐现有基础）
 
-## 里程碑与验收标准
+### A. Channel Runtime（多通道入口）
 
-### M1（2026-03-07 ~ 2026-04-15）：基础模型与命令骨架
-- [ ] 定义科研对象模型：`project/question/hypothesis/dataset/experiment/run/result/paper_draft`
-- [ ] 完成结构化存储与 ID/时间戳/provenance 关联
-- [ ] 完成 `survey/propose/exp/write/submit` 命令组骨架
+- 统一会话语义：不同渠道消息归一到统一 request/event
+- 队列与去重：保证同一会话不会重复响应、乱序响应
+- 主动推送能力：实验完成、心跳摘要、失败告警可回推到上次活跃渠道
+
+### B. Control Plane（运行控制面）
+
+- 常驻状态可观测：runner/channels/cron/mcp 健康状态
+- 配置热更新：模型、通道、定时任务变更尽量无感生效
+- 故障恢复：重启后会话与关键任务状态可恢复
+
+### C. Research Workflow Engine（科研流程引擎）
+
+- 从“单轮问答”升级为“阶段化科研工作流”
+- 阶段：
+  - 文献检索与筛选
+  - 研究问题与假设生成
+  - 实验计划与执行
+  - 统计分析与结论校验
+  - 论文草稿与审稿修订
+
+### D. Evidence & Memory（证据与记忆层）
+
+- 产物结构化落盘（project/question/hypothesis/experiment/result/draft）
+- claim-evidence 绑定（每个结论可追溯到实验与引用）
+- 长会话压缩与跨会话记忆，避免上下文漂移
+
+### E. Scheduler & Autopilot（主动推进）
+
+- heartbeat 驱动“低频自检 + 高价值提醒”
+- cron 驱动定时任务（论文摘要、实验巡检、截止日提醒）
+- 支持“被动响应 + 主动推进”双模式
+
+## 里程碑与验收标准（按 IM Agent 目标重排）
+
+### M1（2026-03-07 ~ 2026-04-15）：IM 基础设施稳态
+- [ ] 通道会话统一协议（session/user/message/event）
+- [ ] 多通道稳定性增强（去重、合并、限流、错误隔离）
+- [ ] 控制面状态页与诊断命令完善
 - 验收标准
-- [ ] CLI 能创建并读取核心对象
-- [ ] 关键对象在磁盘可追踪、可回放
+- [ ] 至少 2 个 IM 渠道 + Console 连续稳定运行 7 天
+- [ ] 消息重复响应率 < 1%，关键错误可观测
 
-### M2（2026-04-16 ~ 2026-06-01）：文献到问题提出
-- [ ] 文献去重、相关性排序、证据抽取
-- [ ] claim-evidence matrix 生成
-- [ ] gap/question/hypothesis 命令可用
+### M2（2026-04-16 ~ 2026-06-01）：文献调研工作流（IM 内闭环）
+- [ ] 文献检索、去重、打分、证据提取流水线
+- [ ] 产出 evidence matrix 与 related-work 草案
+- [ ] IM 中支持“继续追问 + 缩小范围 + 一键导出”
 - 验收标准
-- [ ] 从一组文献可生成可验证研究问题（含证据来源）
+- [ ] 用户可仅在 IM 完成从主题到文献综述草稿
 
-### M3（2026-06-02 ~ 2026-08-01）：实验编排与复现
-- [ ] 实验计划 schema 与 run tracking
-- [ ] 自动记录 seed、超参、git hash、环境、数据版本、日志
-- [ ] baseline/ablation 标准流程
+### M3（2026-06-02 ~ 2026-08-01）：问题提出到实验编排
+- [ ] gap/question/hypothesis 结构化生成
+- [ ] 实验计划、运行、日志、元数据自动归档
+- [ ] 基线对比与消融流程标准化
 - 验收标准
-- [ ] 仅凭 artifact bundle 可重放实验
+- [ ] 在 IM 发起实验后，Agent 可异步执行并主动回传结果
 
 ### M4（2026-08-02 ~ 2026-10-01）：写作与证据一致性
-- [ ] 由结构化资产生成论文草稿（abstract/introduction/related/method/exp/conclusion）
+- [ ] 按论文结构生成方法/实验/结论草稿
 - [ ] claim-evidence 一致性检查器
-- [ ] reviewer-mode 修订流程
+- [ ] 审稿人模式（质疑点、补实验建议、过度结论检测）
 - 验收标准
-- [ ] 生成完整初稿，且核心 claim 可回链到实验和引用
+- [ ] 生成稿件中核心结论可追溯到具体实验与引用
 
-### M5（2026-10-02 ~ 2026-12-01）：提交前闭环
-- [ ] 提交前自动检查（引用、证据、复现、TODO）
-- [ ] 复现材料打包导出
-- [ ] 一键端到端 pipeline 脚本
+### M5（2026-10-02 ~ 2026-12-01）：全流程自动化与提交准备
+- [ ] 提交前检查清单（引用、证据、复现、风险）
+- [ ] 复现材料打包（配置、seed、环境、日志、脚本）
+- [ ] 一键“从任务到 submission bundle”编排
 - 验收标准
-- [ ] 从 topic 到 submission bundle 全流程跑通
+- [ ] 用户在 IM 发出高层目标后，系统可完成端到端交付并回传包
 
-## Epic 拆解（建议作为子 Issue）
+## Epic 拆解（建议创建子 Issue）
 
-- [ ] EPIC: Structured research object model and provenance graph
+- [ ] EPIC: IM-native session protocol and channel reliability
+- [ ] EPIC: Research workflow state machine and artifact schema
 - [ ] EPIC: Literature triage and evidence matrix pipeline
-- [ ] EPIC: Gap detection and hypothesis generation
-- [ ] EPIC: Experiment plan/run tracking and replay
-- [ ] EPIC: Statistical validation and ablation toolkit
-- [ ] EPIC: Draft writing pipeline with claim-evidence checks
-- [ ] EPIC: Submission readiness and reproducibility packaging
+- [ ] EPIC: Hypothesis generation and experiment orchestration
+- [ ] EPIC: Claim-evidence validator and reviewer mode
+- [ ] EPIC: Scheduler/autopilot for proactive research progress
+- [ ] EPIC: Submission packaging and reproducibility gate
 
 ## 建议标签与里程碑
 
-- Labels: `roadmap`, `epic`, `P0`, `P1`, `P2`, `cli`, `agents`, `experiments`, `writing`, `reproducibility`
-- Milestones: `M1-Foundation`, `M2-SurveyQuestion`, `M3-Experiment`, `M4-Writing`, `M5-Submission`
+- Labels: `roadmap`, `epic`, `im-first`, `channels`, `runtime`, `research-workflow`, `experiments`, `writing`, `reproducibility`
+- Milestones: `M1-IM-Runtime`, `M2-Survey`, `M3-Experiment`, `M4-Writing`, `M5-Submission`
 
-## 成功指标（KPI）
+## KPI（按 IM Agent 形态）
 
-- 端到端完成率（topic -> draft/package）>= 70%
-- 实验重放成功率 >= 90%
-- 生成稿件人工重写比例 <= 40%
-- 提交前发现缺证据/缺引用问题覆盖率 >= 95%
+- IM 端到端任务完成率（topic -> draft/package）>= 70%
+- 主动推送成功率 >= 95%
+- 实验可重放成功率 >= 90%
+- 关键结论证据可回溯率 >= 95%
+- 人工接管率（需手动修复流程）逐季下降
 
 ## 风险与缓解
 
-- [ ] 文献筛选质量不足 -> 混合检索+排序+人工 checkpoint
-- [ ] 结论过度自信 -> submit 前强制 claim-evidence 校验
-- [ ] 实验不可复现 -> 元数据强制采集，重放作为准入门槛
-- [ ] 命令复杂度膨胀 -> 固定命令语法 + 默认模板 + 渐进式参数
+- [ ] 多通道行为不一致 -> 统一事件协议 + 渠道适配层测试矩阵
+- [ ] 长任务中断/漂移 -> 工作流状态机 + checkpoint + resume
+- [ ] 结论缺证据 -> 强制 claim-evidence gate
+- [ ] 主动任务扰民 -> 可配置静默时段、优先级和通知策略
+- [ ] 安全边界不足 -> 工具权限分级、敏感操作确认、审计日志
 
-## 未来 2 周优先项（可直接开工）
+## 未来 2 周优先项（立即可执行）
 
-- [ ] 实现科研对象 schema 与持久化
-- [ ] 落地 `survey` 命令组（triage + evidence matrix）
-- [ ] 在 `exp run` 增加复现元数据自动采集
-- [ ] 在 GitHub 建好 milestones、labels、epic 子 issue
+- [ ] 完成“IM 主入口、CLI 控制面”的文档与命令语义对齐
+- [ ] 定义科研流程状态机与 artifact schema（最小可用版本）
+- [ ] 打通“文献调研 -> evidence matrix -> IM 回传”第一条闭环
+- [ ] 为通道可靠性建立回归用例（去重、并发、恢复）
