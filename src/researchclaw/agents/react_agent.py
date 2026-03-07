@@ -17,6 +17,7 @@ from ..constant import (
     DEFAULT_MAX_ITERS,
     WORKING_DIR,
 )
+from .skill_compat import SkillDoc, build_skill_context_prompt, parse_skill_doc
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class ScholarAgent:
 
         # ── 1. Build toolkit ────────────────────────────────────────────
         self._tools: dict[str, Any] = {}
+        self._skill_docs: list[SkillDoc] = []
         self._register_builtin_tools()
         self._register_skills()
 
@@ -106,7 +108,7 @@ class ScholarAgent:
             bibtex_export,
             bibtex_search,
         )
-        from .tools.browser_control import browse_url
+        from .tools.browser_control import browse_url, browser_use
         from .tools.data_analysis import (
             data_describe,
             data_query,
@@ -121,13 +123,15 @@ class ScholarAgent:
             cron_resume_job,
             cron_run_job,
         )
-        from .tools.file_io import read_file, write_file, edit_file
+        from .tools.file_io import read_file, write_file, edit_file, append_file
         from .tools.get_current_time import get_current_time
         from .tools.latex_helper import latex_compile_check, latex_template
         from .tools.memory_search import memory_search
         from .tools.paper_reader import read_paper
         from .tools.semantic_scholar import semantic_scholar_search
         from .tools.send_file import send_file
+        from .tools.copaw_compat import execute_shell_command, send_file_to_user
+        from .tools.skill_tools import skills_list, skills_read_file
         from .tools.shell import run_shell
 
         builtin = {
@@ -154,13 +158,19 @@ class ScholarAgent:
             "cron_run_job": cron_run_job,
             # General tools
             "run_shell": run_shell,
+            "execute_shell_command": execute_shell_command,
             "read_file": read_file,
             "write_file": write_file,
             "edit_file": edit_file,
+            "append_file": append_file,
             "browse_url": browse_url,
+            "browser_use": browser_use,
             "send_file": send_file,
+            "send_file_to_user": send_file_to_user,
             "get_current_time": get_current_time,
             "memory_search": memory_search,
+            "skills_list": skills_list,
+            "skills_read_file": skills_read_file,
         }
         self._tools.update(builtin)
 
@@ -174,7 +184,48 @@ class ScholarAgent:
         for skill_dir in sorted(skills_dir.iterdir()):
             if not skill_dir.is_dir() or skill_dir.name.startswith("."):
                 continue
+            self._load_skill_doc(skill_dir)
             self._load_skill(skill_dir)
+
+    def _refresh_skill_docs(self) -> None:
+        """Refresh SKILL.md metadata from active skills directory."""
+        skills_dir = Path(ACTIVE_SKILLS_DIR)
+        if not skills_dir.is_dir():
+            self._skill_docs = []
+            return
+
+        refreshed: list[SkillDoc] = []
+        for skill_dir in sorted(skills_dir.iterdir()):
+            if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+                continue
+            init_file = skill_dir / "__init__.py"
+            main_file = skill_dir / "main.py"
+            executable = bool(init_file.exists() or main_file.exists())
+            try:
+                parsed = parse_skill_doc(skill_dir, executable=executable)
+                if parsed is not None:
+                    refreshed.append(parsed)
+            except Exception:
+                logger.debug(
+                    "Failed to refresh SKILL.md for %s",
+                    skill_dir.name,
+                    exc_info=True,
+                )
+
+        self._skill_docs = refreshed
+
+    def _load_skill_doc(self, skill_dir: Path) -> None:
+        """Load SKILL.md metadata for CoPaw-style doc-only skills."""
+        init_file = skill_dir / "__init__.py"
+        main_file = skill_dir / "main.py"
+        executable = bool(init_file.exists() or main_file.exists())
+
+        try:
+            parsed = parse_skill_doc(skill_dir, executable=executable)
+            if parsed is not None:
+                self._skill_docs.append(parsed)
+        except Exception:
+            logger.exception("Failed to parse SKILL.md for skill: %s", skill_dir.name)
 
     def _load_skill(self, skill_dir: Path) -> None:
         """Load a single skill from its directory."""
@@ -183,8 +234,10 @@ class ScholarAgent:
         skill_file = main_file if main_file.exists() else init_file
 
         if not skill_file.exists():
-            logger.warning(
-                "Skill %s has no entry point, skipping",
+            # CoPaw compatibility: doc-only skills are valid and loaded via
+            # SKILL.md prompt guidance in _build_messages.
+            logger.debug(
+                "Skill %s has no Python entry point; treat as guidance-only skill",
                 skill_dir.name,
             )
             return
@@ -331,7 +384,7 @@ class ScholarAgent:
         self.memory.add_message("user", message, session_id=session_id)
 
         # Build messages for the model
-        messages = self._build_messages()
+        messages = self._build_messages(user_message=message)
 
         # Prepare tool kwargs
         model_kwargs: dict[str, Any] = {}
@@ -542,9 +595,21 @@ class ScholarAgent:
         )
         return timeout_msg
 
-    def _build_messages(self) -> list[dict[str, str]]:
+    def _build_messages(self, user_message: str | None = None) -> list[dict[str, str]]:
         """Build the message list for the LLM from memory and system prompt."""
+        self._refresh_skill_docs()
         messages = [{"role": "system", "content": self.sys_prompt}]
+
+        # CoPaw-style skill compatibility: inject skill guidance for current turn.
+        # This allows doc-only skills (SKILL.md without Python entry points) to
+        # shape behavior while keeping tools as the execution backend.
+        if self._skill_docs:
+            skill_hint = build_skill_context_prompt(
+                query=user_message or "",
+                skills=self._skill_docs,
+            )
+            if skill_hint:
+                messages.append({"role": "system", "content": skill_hint})
 
         # Add compact summary if available
         if self.memory.compact_summary:
@@ -839,7 +904,7 @@ class ScholarAgent:
             return
 
         self.memory.add_message("user", message, session_id=session_id)
-        messages = self._build_messages()
+        messages = self._build_messages(user_message=message)
         full_content = ""
 
         # Prepare tool kwargs for model calls
