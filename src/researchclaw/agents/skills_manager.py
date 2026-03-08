@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
+import yaml
 
 from ..constant import ACTIVE_SKILLS_DIR, CUSTOMIZED_SKILLS_DIR
 
@@ -49,6 +50,7 @@ class SkillInfo(BaseModel):
     references: Dict[str, Any] = Field(default_factory=dict)  # nested tree
     scripts: Dict[str, Any] = Field(default_factory=dict)  # nested tree
     requires: Dict[str, Any] = Field(default_factory=dict)
+    triggers: List[str] = Field(default_factory=list)
 
 
 # ── Frontmatter parsing ───────────────────────────────────────────
@@ -61,7 +63,24 @@ def _parse_skill_md(text: str) -> Dict[str, Any]:
     (compatible with CoPaw's frontmatter convention).
     """
     meta: Dict[str, Any] = {}
-    for line in text.splitlines():
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        fm_lines: list[str] = []
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            fm_lines.append(line)
+        try:
+            parsed = yaml.safe_load("\n".join(fm_lines))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            logger.debug("Failed to parse YAML frontmatter", exc_info=True)
+
+    # Bullet-style fallback:
+    # - name: xxx
+    # - description: yyy
+    for line in lines:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -71,10 +90,38 @@ def _parse_skill_md(text: str) -> Dict[str, Any]:
                 key, _, val = line.partition(":")
                 meta[key.strip()] = val.strip()
             continue
-        # Stop at first non-metadata line
-        if not line.startswith("-") and meta:
+        if meta:
             break
     return meta
+
+
+def _normalize_trigger_values(value: Any) -> List[str]:
+    """Normalize trigger metadata to a compact list of strings."""
+    values: list[str] = []
+    if value is None:
+        return values
+    if isinstance(value, str):
+        values.extend([v.strip() for v in value.split(",") if v.strip()])
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                values.append(item.strip())
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(k, str) and k.strip():
+                values.append(k.strip())
+            if isinstance(v, str) and v.strip():
+                values.append(v.strip())
+    # Keep order, remove duplicates
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for v in values:
+        key = v.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(v)
+    return deduped
 
 
 # ── Directory tree helpers ─────────────────────────────────────────
@@ -545,6 +592,7 @@ def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
     emoji = ""
     content = ""
     requires: Dict[str, Any] = {}
+    triggers: List[str] = []
 
     # Try SKILL.md first (primary metadata source)
     skill_md = skill_dir / "SKILL.md"
@@ -554,7 +602,17 @@ def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
         description = meta.get("description", "")
         emoji = meta.get("emoji", "")
         if "requires" in meta:
-            requires = {"raw": meta["requires"]}
+            req = meta["requires"]
+            if isinstance(req, dict):
+                requires = req
+            else:
+                requires = {"raw": req}
+        trigger_values: list[str] = []
+        trigger_values.extend(_normalize_trigger_values(meta.get("triggers")))
+        trigger_values.extend(_normalize_trigger_values(meta.get("trigger")))
+        trigger_values.extend(_normalize_trigger_values(meta.get("keywords")))
+        trigger_values.extend(_normalize_trigger_values(meta.get("aliases")))
+        triggers = _normalize_trigger_values(trigger_values)
         # Override name from frontmatter if present
         if meta.get("name"):
             name = meta["name"]
@@ -596,4 +654,5 @@ def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
         references=references,
         scripts=scripts,
         requires=requires,
+        triggers=triggers,
     )

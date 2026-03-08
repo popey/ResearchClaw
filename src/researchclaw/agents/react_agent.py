@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from ..constant import (
     ACTIVE_SKILLS_DIR,
@@ -17,12 +17,19 @@ from ..constant import (
     DEFAULT_MAX_ITERS,
     WORKING_DIR,
 )
-from .skill_compat import SkillDoc, build_skill_context_prompt, parse_skill_doc
+from .skill_compat import (
+    SkillDoc,
+    build_skill_context_prompt,
+    explain_skill_selection,
+    parse_skill_doc,
+    select_relevant_skills,
+)
 
 logger = logging.getLogger(__name__)
 
 # Paths to built-in Markdown prompt files
 _MD_FILES_DIR = Path(__file__).parent / "md_files"
+NamesakeStrategy = Literal["override", "skip", "raise", "rename"]
 
 
 class ScholarAgent:
@@ -59,15 +66,18 @@ class ScholarAgent:
         max_iters: int = DEFAULT_MAX_ITERS,
         max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
         working_dir: str = WORKING_DIR,
+        namesake_strategy: NamesakeStrategy = "skip",
     ) -> None:
         self.name = name
         self.working_dir = working_dir
         self.max_iters = max_iters
         self.max_input_tokens = max_input_tokens
+        self.namesake_strategy: NamesakeStrategy = namesake_strategy
 
         # ── 1. Build toolkit ────────────────────────────────────────────
         self._tools: dict[str, Any] = {}
         self._skill_docs: list[SkillDoc] = []
+        self._last_skill_debug: dict[str, Any] = {}
         self._register_builtin_tools()
         self._register_skills()
 
@@ -172,10 +182,51 @@ class ScholarAgent:
             "skills_list": skills_list,
             "skills_read_file": skills_read_file,
         }
-        self._tools.update(builtin)
+        for tool_name, tool_fn in builtin.items():
+            self._register_tool(tool_name, tool_fn, source="builtin")
+
+    def _register_tool(self, name: str, func: Any, source: str = "") -> str:
+        """Register a single tool with namesake strategy handling."""
+        if name not in self._tools:
+            self._tools[name] = func
+            return name
+
+        strategy = self.namesake_strategy
+        prefix = f"{source} " if source else ""
+        if strategy == "skip":
+            logger.warning(
+                "Skip duplicate tool '%s' from %s(source already exists)",
+                name,
+                prefix or "",
+            )
+            return name
+
+        if strategy == "raise":
+            raise ValueError(f"Duplicate tool '{name}' from {source}")
+
+        if strategy == "rename":
+            idx = 2
+            renamed = f"{name}_{idx}"
+            while renamed in self._tools:
+                idx += 1
+                renamed = f"{name}_{idx}"
+            self._tools[renamed] = func
+            logger.info("Renamed duplicate tool '%s' -> '%s'", name, renamed)
+            return renamed
+
+        # override
+        self._tools[name] = func
+        logger.info("Override tool '%s' from %s", name, source or "unknown")
+        return name
 
     def _register_skills(self) -> None:
         """Load and register skills from the active_skills directory."""
+        try:
+            from .skills_manager import ensure_skills_initialized
+
+            ensure_skills_initialized()
+        except Exception:
+            logger.warning("Failed to initialize skills directory", exc_info=True)
         skills_dir = Path(ACTIVE_SKILLS_DIR)
         if not skills_dir.is_dir():
             logger.debug("No active_skills directory found at %s", skills_dir)
@@ -266,7 +317,12 @@ class ScholarAgent:
 
                 # Convention: skills expose a `tools` dict or `register` function
                 if hasattr(mod, "tools"):
-                    self._tools.update(mod.tools)
+                    for tool_name, tool_fn in mod.tools.items():
+                        self._register_tool(
+                            tool_name,
+                            tool_fn,
+                            source=f"skill:{skill_dir.name}",
+                        )
                     logger.info(
                         "Loaded skill: %s (%d tools)",
                         skill_dir.name,
@@ -275,7 +331,12 @@ class ScholarAgent:
                 elif hasattr(mod, "register"):
                     new_tools = mod.register()
                     if isinstance(new_tools, dict):
-                        self._tools.update(new_tools)
+                        for tool_name, tool_fn in new_tools.items():
+                            self._register_tool(
+                                tool_name,
+                                tool_fn,
+                                source=f"skill:{skill_dir.name}",
+                            )
                         logger.info(
                             "Loaded skill: %s (%d tools)",
                             skill_dir.name,
@@ -306,13 +367,52 @@ class ScholarAgent:
 
     def register_mcp_clients(self, mcp_clients: list[Any]) -> None:
         """Register MCP (Model Context Protocol) clients to the toolkit."""
+        changed = False
         for client in mcp_clients:
             try:
                 tools = client.get_tools()
-                self._tools.update(tools)
+                if not isinstance(tools, dict):
+                    logger.warning(
+                        "MCP client returned non-dict tools: %s",
+                        type(tools).__name__,
+                    )
+                    continue
+                for tool_name, tool_fn in tools.items():
+                    self._register_tool(
+                        tool_name,
+                        tool_fn,
+                        source=f"mcp:{getattr(client, 'name', 'client')}",
+                    )
+                    changed = True
                 logger.info("Registered MCP client with %d tools", len(tools))
             except Exception:
                 logger.exception("Failed to register MCP client")
+                # Best-effort recovery for stateful clients.
+                try:
+                    reconnect = getattr(client, "reconnect", None) or getattr(
+                        client,
+                        "connect",
+                        None,
+                    )
+                    if callable(reconnect):
+                        reconnect()
+                        retry_tools = client.get_tools()
+                        if isinstance(retry_tools, dict):
+                            for tool_name, tool_fn in retry_tools.items():
+                                self._register_tool(
+                                    tool_name,
+                                    tool_fn,
+                                    source=f"mcp:{getattr(client, 'name', 'client')}:recovered",
+                                )
+                                changed = True
+                            logger.info(
+                                "Recovered MCP client and registered %d tools",
+                                len(retry_tools),
+                            )
+                except Exception:
+                    logger.debug("MCP client recovery failed", exc_info=True)
+        if changed:
+            self._tool_schemas = self._build_tool_schemas()
 
     # ── Reply ───────────────────────────────────────────────────────────
 
@@ -604,9 +704,20 @@ class ScholarAgent:
         # This allows doc-only skills (SKILL.md without Python entry points) to
         # shape behavior while keeping tools as the execution backend.
         if self._skill_docs:
+            selection_debug = explain_skill_selection(
+                query=user_message or "",
+                skills=self._skill_docs,
+            )
+            selected_skills = select_relevant_skills(
+                query=user_message or "",
+                skills=self._skill_docs,
+            )
+            self._last_skill_debug = selection_debug
             skill_hint = build_skill_context_prompt(
                 query=user_message or "",
                 skills=self._skill_docs,
+                selected_skills=selected_skills,
+                selection_debug=selection_debug,
             )
             if skill_hint:
                 messages.append({"role": "system", "content": skill_hint})
@@ -623,6 +734,15 @@ class ScholarAgent:
         # Add recent messages
         messages.extend(self.memory.get_recent_messages())
         return messages
+
+    def get_last_skill_debug(self) -> dict[str, Any]:
+        """Return skill-selection debug info from the latest turn."""
+        return dict(self._last_skill_debug)
+
+    def get_skill_debug_for_query(self, query: str) -> dict[str, Any]:
+        """Run skill selection for an arbitrary query and return debug details."""
+        self._refresh_skill_docs()
+        return explain_skill_selection(query=query, skills=self._skill_docs)
 
     def rebuild_sys_prompt(self) -> None:
         """Rebuild the system prompt from working directory files."""

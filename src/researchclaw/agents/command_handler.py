@@ -42,6 +42,7 @@ class CommandHandler:
             "/compact_str": self._cmd_compact_str,
             "/papers": self._cmd_papers,
             "/refs": self._cmd_refs,
+            "/skills": self._cmd_skills,
             "/help": self._cmd_help,
         }
 
@@ -73,14 +74,18 @@ class CommandHandler:
 
     def _handle_daemon_command_if_any(self, message: str) -> Optional[str]:
         """Handle /daemon-style runtime commands."""
-        from researchclaw.app.runner.daemon_commands import (
-            DaemonContext,
-            parse_daemon_query,
-            run_daemon_logs,
-            run_daemon_reload_config,
-            run_daemon_status,
-            run_daemon_version,
-        )
+        try:
+            from researchclaw.app.runner.daemon_commands import (
+                DaemonContext,
+                parse_daemon_query,
+                run_daemon_logs,
+                run_daemon_reload_config,
+                run_daemon_status,
+                run_daemon_version,
+            )
+        except Exception:
+            # Keep chat commands usable even when app/daemon deps are absent.
+            return None
 
         parsed = parse_daemon_query(message)
         if parsed is None:
@@ -209,6 +214,74 @@ class CommandHandler:
         except Exception:
             return "⚠️ Could not read reference library."
 
+    def _cmd_skills(self, args: str) -> str:
+        """Show active skills and optional selection debug."""
+        active: list[str] = []
+        try:
+            from .skills_manager import SkillsManager
+
+            manager = SkillsManager()
+            active = manager.list_active_skills()
+        except Exception:
+            # Fallback for lightweight runtimes without optional deps.
+            skill_docs = getattr(self.agent, "_skill_docs", [])
+            active = sorted(
+                s.name for s in skill_docs if getattr(s, "name", "").strip()
+            )
+        if not args.strip():
+            lines = ["🧩 **Active Skills**", ""]
+            if not active:
+                lines.append("- (none)")
+            else:
+                for name in active:
+                    lines.append(f"- {name}")
+            lines.append("")
+            lines.append("Use `/skills debug <query>` to inspect skill routing.")
+            return "\n".join(lines)
+
+        if not args.strip().startswith("debug"):
+            return (
+                "Unknown `/skills` subcommand.\n"
+                "Use `/skills` or `/skills debug <query>`."
+            )
+
+        query = args.strip()[len("debug") :].strip()
+        if query:
+            debug = self.agent.get_skill_debug_for_query(query)
+            title = f"🔎 **Skill Debug** for: `{query}`"
+        else:
+            debug = self.agent.get_last_skill_debug()
+            title = "🔎 **Skill Debug** (last turn)"
+
+        selected = debug.get("selected", []) if isinstance(debug, dict) else []
+        details = debug.get("details", []) if isinstance(debug, dict) else []
+
+        lines = [title, ""]
+        lines.append("Selected:")
+        if isinstance(selected, list) and selected:
+            for name in selected:
+                lines.append(f"- {name}")
+        else:
+            lines.append("- (none)")
+
+        lines.append("")
+        lines.append("Details:")
+        if isinstance(details, list) and details:
+            for item in details:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name", "")
+                mode = item.get("mode", "")
+                score = item.get("score", "")
+                matched = item.get("matched", [])
+                matched_str = ", ".join(matched[:8]) if isinstance(matched, list) else ""
+                lines.append(
+                    f"- {name}: mode={mode}, score={score}, matched=[{matched_str}]",
+                )
+        else:
+            lines.append("- (no selection details)")
+        return "\n".join(lines)
+
     def _cmd_help(self, args: str) -> str:
         """Show available commands."""
         return (
@@ -221,6 +294,8 @@ class CommandHandler:
             "| `/history` | Show conversation statistics |\n"
             "| `/papers` | List recently discussed papers |\n"
             "| `/refs` | Show reference library summary |\n"
+            "| `/skills` | List active skills |\n"
+            "| `/skills debug [query]` | Show skill routing debug info |\n"
             "| `/compact_str` | Show current memory summary |\n"
             "| `/daemon status` | Show runtime daemon status |\n"
             "| `/daemon logs [n]` | Tail daemon logs |\n"

@@ -19,6 +19,7 @@ def skills_list(active_only: bool = True) -> list[dict[str, Any]]:
                 "description": s.description,
                 "source": s.source,
                 "enabled": s.name in active,
+                "triggers": getattr(s, "triggers", []),
             }
             for s in all_skills
             if s.name in active
@@ -32,6 +33,7 @@ def skills_list(active_only: bool = True) -> list[dict[str, Any]]:
             "description": s.description,
             "source": s.source,
             "enabled": s.name in active,
+            "triggers": getattr(s, "triggers", []),
         }
         for s in all_skills
     ]

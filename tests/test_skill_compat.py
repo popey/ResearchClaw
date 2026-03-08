@@ -3,6 +3,7 @@ from pathlib import Path
 from researchclaw.agents.skill_compat import (
     SkillDoc,
     build_skill_context_prompt,
+    explain_skill_selection,
     parse_skill_doc,
     select_relevant_skills,
 )
@@ -99,3 +100,34 @@ def test_select_relevant_skills_chinese_keywords() -> None:
     ]
     selected = select_relevant_skills("帮我配置钉钉频道接入", skills)
     assert [s.name for s in selected] == ["dingtalk_channel_connect"]
+
+
+def test_explain_skill_selection_contains_details() -> None:
+    skills = [
+        SkillDoc(
+            name="news",
+            description="latest news lookup",
+            content="# News",
+            path="/tmp/news/SKILL.md",
+            aliases={"news"},
+            keywords={"news", "latest"},
+        ),
+    ]
+    debug = explain_skill_selection("latest news", skills)
+    assert debug["selected"] == ["news"]
+    assert isinstance(debug.get("details"), list)
+
+
+def test_explain_skill_selection_chinese_news_synonym() -> None:
+    skills = [
+        SkillDoc(
+            name="news",
+            description="latest headlines",
+            content="# News",
+            path="/tmp/news/SKILL.md",
+            aliases={"news"},
+            keywords={"news", "latest", "headlines"},
+        ),
+    ]
+    debug = explain_skill_selection("给我今天科技新闻", skills)
+    assert debug["selected"] == ["news"]
