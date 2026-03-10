@@ -63,6 +63,8 @@ def _parse_skill_md(text: str) -> Dict[str, Any]:
     (compatible with CoPaw's frontmatter convention).
     """
     meta: Dict[str, Any] = {}
+    if "\n" not in text and "\\n" in text:
+        text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
     lines = text.splitlines()
     if lines and lines[0].strip() == "---":
         fm_lines: list[str] = []

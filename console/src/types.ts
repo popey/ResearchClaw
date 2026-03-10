@@ -134,6 +134,7 @@ export type ProviderItem = {
   name: string;
   provider_type: string;
   model_name?: string;
+  model_names?: string[];
   api_key?: string;
   base_url?: string;
   enabled?: boolean;

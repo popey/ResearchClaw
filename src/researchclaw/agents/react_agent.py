@@ -21,6 +21,7 @@ from .skill_compat import (
     SkillDoc,
     build_skill_context_prompt,
     explain_skill_selection,
+    extract_skill_runtime_spec,
     parse_skill_doc,
     select_relevant_skills,
 )
@@ -329,33 +330,20 @@ class ScholarAgent:
                 sys.modules[module_fqn] = mod
                 spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
-                # Convention: skills expose a `tools` dict or `register` function
-                if hasattr(mod, "tools"):
-                    for tool_name, tool_fn in mod.tools.items():
+                runtime = extract_skill_runtime_spec(mod, agent=self)
+                if runtime.tools:
+                    for tool_name, tool_fn in runtime.tools.items():
                         self._register_tool(
                             tool_name,
                             tool_fn,
                             source=f"skill:{skill_dir.name}",
                         )
                     logger.info(
-                        "Loaded skill: %s (%d tools)",
+                        "Loaded skill: %s (%d tools via %s)",
                         skill_dir.name,
-                        len(mod.tools),
+                        len(runtime.tools),
+                        runtime.entrypoint or "unknown",
                     )
-                elif hasattr(mod, "register"):
-                    new_tools = mod.register()
-                    if isinstance(new_tools, dict):
-                        for tool_name, tool_fn in new_tools.items():
-                            self._register_tool(
-                                tool_name,
-                                tool_fn,
-                                source=f"skill:{skill_dir.name}",
-                            )
-                        logger.info(
-                            "Loaded skill: %s (%d tools)",
-                            skill_dir.name,
-                            len(new_tools),
-                        )
         except Exception:
             logger.exception("Failed to load skill: %s", skill_dir.name)
 

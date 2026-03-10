@@ -30,6 +30,20 @@ function fmtBytes(bytes?: number): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function fmtLastDispatch(value: unknown): string {
+  if (!value || typeof value !== "object") return "-";
+  const item = value as {
+    channel?: unknown;
+    user_id?: unknown;
+    session_id?: unknown;
+  };
+  const channel = String(item.channel ?? "").trim();
+  const userId = String(item.user_id ?? "").trim();
+  const sessionId = String(item.session_id ?? "").trim();
+  const parts = [channel, userId, sessionId].filter(Boolean);
+  return parts.length > 0 ? parts.join(" / ") : "-";
+}
+
 export default function WorkspacePage() {
   const [workspace, setWorkspace] = useState<any>(null);
   const [relations, setRelations] = useState<any>(null);
@@ -209,7 +223,7 @@ export default function WorkspacePage() {
                 {(relations?.config?.available_channels || []).join(", ") || "-"}
               </div>
               <div className="workspace-rel-meta">
-                last_dispatch: {relations?.config?.last_dispatch || "-"}
+                last_dispatch: {fmtLastDispatch(relations?.config?.last_dispatch)}
               </div>
             </div>
           </div>

@@ -77,6 +77,7 @@ def configure_provider_api_key_interactive(
             "name": provider_name,
             "provider_type": provider_type,
             "model_name": model_name,
+            "model_names": [model_name] if model_name else [],
             "api_key": api_key,
             "base_url": base_url,
             "extra": {},
@@ -129,7 +130,10 @@ def list_cmd() -> None:
         click.echo(f"  {'api_key':16s}: {_mask_api_key(p.get('api_key', ''))}")
         if p.get("base_url"):
             click.echo(f"  {'base_url':16s}: {p['base_url']}")
-        if p.get("model_name"):
+        model_names = p.get("model_names") or []
+        if model_names:
+            click.echo(f"  {'models':16s}: {', '.join(model_names)}")
+        elif p.get("model_name"):
             click.echo(f"  {'model':16s}: {p['model_name']}")
     click.echo()
 
@@ -160,6 +164,7 @@ def add_cmd(
             "name": name,
             "provider_type": provider_type,
             "model_name": model_name,
+            "model_names": [model_name] if model_name else [],
             "api_key": api_key,
             "base_url": base_url,
             "extra": {},

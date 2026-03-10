@@ -23,6 +23,7 @@ class ProviderConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model_name: str | None = None
+    model_names: list[str] = Field(default_factory=list)
     enabled: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -34,6 +35,7 @@ class ProviderSettingsUpdate(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model_name: str | None = None
+    model_names: list[str] | None = None
     extra: dict[str, Any] | None = None
 
 
@@ -86,7 +88,7 @@ async def add_provider(config: ProviderConfig):
         )
 
 
-@router.post("/{name}/enable")
+@router.post("/{name:path}/enable")
 async def enable_provider(name: str, req: Request):
     """Set this provider as the active one; disable all others."""
     try:
@@ -107,7 +109,7 @@ async def enable_provider(name: str, req: Request):
         )
 
 
-@router.post("/{name}/disable")
+@router.post("/{name:path}/disable")
 async def disable_provider(name: str, req: Request):
     """Disable this provider without affecting others."""
     try:
@@ -128,7 +130,7 @@ async def disable_provider(name: str, req: Request):
         )
 
 
-@router.post("/{name}/settings")
+@router.post("/{name:path}/settings")
 async def update_provider_settings(name: str, update: ProviderSettingsUpdate):
     """Update settings of an existing provider (partial update)."""
     try:
@@ -159,13 +161,13 @@ async def update_provider_settings(name: str, update: ProviderSettingsUpdate):
         )
 
 
-@router.put("/{name}")
+@router.put("/{name:path}")
 async def update_provider_put(name: str, update: ProviderSettingsUpdate):
     """Update settings via PUT (alias for POST /{name}/settings)."""
     return await update_provider_settings(name, update)
 
 
-@router.post("/{name}/apply")
+@router.post("/{name:path}/apply")
 async def apply_provider(name: str, req: Request):
     """Apply the provider to the running agent (hot-reload).
 
@@ -211,7 +213,7 @@ async def apply_provider(name: str, req: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{name}")
+@router.delete("/{name:path}")
 async def remove_provider(name: str):
     """Remove a provider."""
     try:
@@ -243,11 +245,13 @@ async def list_available_models():
     except ImportError:
         return {
             "models": [
-                {"name": "gpt-4o", "provider": "openai"},
-                {"name": "gpt-4o-mini", "provider": "openai"},
+                {"name": "gpt-5", "provider": "openai"},
+                {"name": "gpt-5-mini", "provider": "openai"},
+                {"name": "gpt-4.1", "provider": "openai"},
                 {"name": "claude-sonnet-4-20250514", "provider": "anthropic"},
                 {"name": "deepseek-chat", "provider": "deepseek"},
                 {"name": "qwen-max", "provider": "dashscope"},
+                {"name": "llama3.2", "provider": "ollama"},
             ],
             "note": "Default model list (provider store not initialized)",
         }
@@ -258,7 +262,7 @@ def _safe_join_url(base_url: str, suffix: str) -> str:
     return f"{value}{suffix}"
 
 
-@router.post("/{name}/test", response_model=ProviderTestResponse)
+@router.post("/{name:path}/test", response_model=ProviderTestResponse)
 async def test_provider(name: str):
     """Lightweight provider connectivity/config test."""
     try:
@@ -322,7 +326,7 @@ async def test_provider(name: str):
         )
 
 
-@router.post("/{name}/discover-models", response_model=DiscoverModelsResponse)
+@router.post("/{name:path}/discover-models", response_model=DiscoverModelsResponse)
 async def discover_models(name: str):
     """Discover candidate models for a provider."""
     try:

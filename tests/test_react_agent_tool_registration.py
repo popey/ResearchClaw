@@ -42,3 +42,19 @@ def test_register_mcp_clients_refreshes_schemas() -> None:
     agent.register_mcp_clients([_DummyMcp()])
     assert "mcp_tool" in agent._tools
     assert agent._tool_schemas == [{"type": "function"}]
+
+
+def test_load_skill_accepts_get_tools_entrypoint(tmp_path) -> None:
+    skill_dir = tmp_path / "third_party_skill"
+    skill_dir.mkdir()
+    (skill_dir / "__init__.py").write_text(
+        "def sample_tool():\n"
+        "    return 'ok'\n\n"
+        "def get_tools():\n"
+        "    return {'sample_tool': sample_tool}\n",
+        encoding="utf-8",
+    )
+
+    agent = _make_agent("override")
+    agent._load_skill(skill_dir)
+    assert "sample_tool" in agent._tools

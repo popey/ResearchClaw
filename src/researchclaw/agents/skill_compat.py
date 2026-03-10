@@ -8,10 +8,11 @@ support for those guidance-style skills.
 
 from __future__ import annotations
 
+import inspect
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import yaml
 
@@ -72,6 +73,34 @@ class SkillDoc:
     aliases: set[str] = field(default_factory=set)
     keywords: set[str] = field(default_factory=set)
     triggers: set[str] = field(default_factory=set)
+    user_invocable: bool = True
+    model_invocable: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SkillRuntimeSpec:
+    """Normalized runtime contract for Python-backed skills."""
+
+    tools: dict[str, Any] = field(default_factory=dict)
+    entrypoint: str = ""
+
+
+def _coerce_bool(value: object, *, default: bool) -> bool:
+    """Convert loose frontmatter booleans to a stable bool."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
 
 
 def _normalize_trigger_values(value: object) -> set[str]:
@@ -95,6 +124,200 @@ def _normalize_trigger_values(value: object) -> set[str]:
     return set(items)
 
 
+def _merge_trigger_values(*values: object) -> set[str]:
+    merged: set[str] = set()
+    for value in values:
+        merged |= _normalize_trigger_values(value)
+    return merged
+
+
+def _frontmatter_lookup(
+    frontmatter: dict[str, object],
+    *keys: str,
+) -> object | None:
+    """Lookup a key in frontmatter, supporting dash/underscore variants."""
+    lowered = {
+        str(key).strip().lower(): value
+        for key, value in frontmatter.items()
+        if isinstance(key, str)
+    }
+    for key in keys:
+        for variant in {
+            key,
+            key.lower(),
+            key.replace("_", "-"),
+            key.replace("-", "_"),
+        }:
+            if variant in frontmatter:
+                return frontmatter[variant]
+            lowered_variant = variant.lower()
+            if lowered_variant in lowered:
+                return lowered[lowered_variant]
+    return None
+
+
+def _extract_frontmatter(content: str) -> dict[str, object]:
+    """Best-effort extraction of YAML frontmatter from SKILL.md."""
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+
+    fm_lines: list[str] = []
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        fm_lines.append(line)
+
+    try:
+        loaded = yaml.safe_load("\n".join(fm_lines))
+        if isinstance(loaded, dict):
+            return loaded
+    except Exception:
+        # Keep resilient parsing for partially malformed frontmatter.
+        parsed: dict[str, object] = {}
+        for raw_line in fm_lines:
+            line = raw_line.strip()
+            if not line or ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                parsed[key] = value
+        return parsed
+    return {}
+
+
+def _normalize_runtime_tool_map(candidate: object) -> dict[str, Any]:
+    """Normalize common OpenClaw/ClawHub-style runtime tool exports."""
+    if candidate is None:
+        return {}
+
+    if isinstance(candidate, dict):
+        normalized: dict[str, Any] = {}
+        for name, value in candidate.items():
+            tool_name = str(name).strip()
+            if not tool_name:
+                continue
+            if callable(value):
+                normalized[tool_name] = value
+                continue
+            if isinstance(value, dict):
+                tool_fn = (
+                    value.get("callable")
+                    or value.get("function")
+                    or value.get("handler")
+                    or value.get("tool")
+                )
+                if callable(tool_fn):
+                    normalized[tool_name] = tool_fn
+        return normalized
+
+    if isinstance(candidate, (list, tuple, set)):
+        normalized = {}
+        for item in candidate:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            tool_fn = (
+                item.get("callable")
+                or item.get("function")
+                or item.get("handler")
+                or item.get("tool")
+            )
+            if isinstance(name, str) and name.strip() and callable(tool_fn):
+                normalized[name.strip()] = tool_fn
+        return normalized
+
+    direct_tools = getattr(candidate, "tools", None)
+    if direct_tools is not None:
+        normalized = _normalize_runtime_tool_map(direct_tools)
+        if normalized:
+            return normalized
+
+    getter = getattr(candidate, "get_tools", None)
+    if callable(getter):
+        return _normalize_runtime_tool_map(getter())
+
+    return {}
+
+
+def _call_runtime_entrypoint(entrypoint: Any, agent: object | None) -> object:
+    """Invoke a runtime factory with optional agent context."""
+    sig = inspect.signature(entrypoint)
+    params = list(sig.parameters.values())
+    required = [
+        param
+        for param in params
+        if param.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+        and param.default is inspect.Parameter.empty
+    ]
+
+    if not required:
+        return entrypoint()
+
+    if len(required) == 1:
+        param = required[0]
+        if param.kind == inspect.Parameter.KEYWORD_ONLY:
+            return entrypoint(**{param.name: agent})
+        return entrypoint(agent)
+
+    raise TypeError(
+        f"Unsupported skill entrypoint signature for {entrypoint!r}: {sig}",
+    )
+
+
+def extract_skill_runtime_spec(
+    module: object,
+    *,
+    agent: object | None = None,
+) -> SkillRuntimeSpec:
+    """Load tools from common skill export conventions."""
+    direct_exports = (
+        ("tools", getattr(module, "tools", None)),
+        ("TOOLS", getattr(module, "TOOLS", None)),
+    )
+    for name, candidate in direct_exports:
+        tools = _normalize_runtime_tool_map(candidate)
+        if tools:
+            return SkillRuntimeSpec(tools=tools, entrypoint=name)
+
+    callable_exports = ("register", "get_tools", "load")
+    for name in callable_exports:
+        candidate = getattr(module, name, None)
+        if not callable(candidate):
+            continue
+        tools = _normalize_runtime_tool_map(_call_runtime_entrypoint(candidate, agent))
+        if tools:
+            return SkillRuntimeSpec(tools=tools, entrypoint=name)
+
+    object_exports = ("skill", "SKILL")
+    for name in object_exports:
+        candidate = getattr(module, name, None)
+        tools = _normalize_runtime_tool_map(candidate)
+        if tools:
+            return SkillRuntimeSpec(tools=tools, entrypoint=name)
+        for method_name in ("register", "get_tools", "load"):
+            method = getattr(candidate, method_name, None)
+            if not callable(method):
+                continue
+            tools = _normalize_runtime_tool_map(
+                _call_runtime_entrypoint(method, agent),
+            )
+            if tools:
+                return SkillRuntimeSpec(
+                    tools=tools,
+                    entrypoint=f"{name}.{method_name}",
+                )
+
+    return SkillRuntimeSpec()
+
+
 def parse_skill_doc(skill_dir: Path, *, executable: bool) -> SkillDoc | None:
     """Parse ``SKILL.md`` in a skill directory."""
     skill_md = skill_dir / "SKILL.md"
@@ -108,45 +331,30 @@ def parse_skill_doc(skill_dir: Path, *, executable: bool) -> SkillDoc | None:
     name = skill_dir.name
     description = ""
     trigger_values: set[str] = set()
+    frontmatter = _extract_frontmatter(content)
 
     lines = content.splitlines()
-    # Frontmatter style:
-    # ---
-    # name: xxx
-    # description: yyy
-    # ---
-    if lines and lines[0].strip() == "---":
-        fm_lines: list[str] = []
-        for line in lines[1:]:
-            if line.strip() == "---":
-                break
-            fm_lines.append(line)
-        try:
-            loaded = yaml.safe_load("\n".join(fm_lines))
-            if isinstance(loaded, dict):
-                value = loaded.get("name")
-                if isinstance(value, str) and value.strip():
-                    name = value.strip()
-                value = loaded.get("description")
-                if isinstance(value, str) and value.strip():
-                    description = value.strip()
-                trigger_values |= _normalize_trigger_values(loaded.get("triggers"))
-                trigger_values |= _normalize_trigger_values(loaded.get("trigger"))
-                trigger_values |= _normalize_trigger_values(loaded.get("keywords"))
-                trigger_values |= _normalize_trigger_values(loaded.get("aliases"))
-        except Exception:
-            # Keep resilient parsing for partially malformed frontmatter.
-            for raw_line in fm_lines:
-                line = raw_line.strip()
-                if not line or ":" not in line:
-                    continue
-                key, _, value = line.partition(":")
-                key = key.strip().lower()
-                value = value.strip().strip('"').strip("'")
-                if key == "name" and value:
-                    name = value
-                elif key == "description" and value:
-                    description = value
+    metadata = _frontmatter_lookup(frontmatter, "metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+
+    if frontmatter:
+        value = _frontmatter_lookup(frontmatter, "name")
+        if isinstance(value, str) and value.strip():
+            name = value.strip()
+        value = _frontmatter_lookup(frontmatter, "description")
+        if isinstance(value, str) and value.strip():
+            description = value.strip()
+        trigger_values |= _merge_trigger_values(
+            _frontmatter_lookup(frontmatter, "triggers"),
+            _frontmatter_lookup(frontmatter, "trigger"),
+            _frontmatter_lookup(frontmatter, "keywords"),
+            _frontmatter_lookup(frontmatter, "aliases"),
+            _frontmatter_lookup(frontmatter, "slash_commands"),
+            _frontmatter_lookup(frontmatter, "slash-commands"),
+            _frontmatter_lookup(metadata_dict, "triggers"),
+            _frontmatter_lookup(metadata_dict, "keywords"),
+            _frontmatter_lookup(metadata_dict, "aliases"),
+        )
 
     # Bullet style:
     # - name: xxx
@@ -178,6 +386,24 @@ def parse_skill_doc(skill_dir: Path, *, executable: bool) -> SkillDoc | None:
             if description:
                 break
 
+    user_invocable = _coerce_bool(
+        _frontmatter_lookup(
+            frontmatter,
+            "user_invocable",
+            "user-invocable",
+        ),
+        default=True,
+    )
+    disable_model_invocation = _coerce_bool(
+        _frontmatter_lookup(
+            frontmatter,
+            "disable_model_invocation",
+            "disable-model-invocation",
+        ),
+        default=False,
+    )
+    model_invocable = not disable_model_invocation
+
     aliases = {_norm(name), _norm(skill_dir.name)}
     aliases |= {_norm(t) for t in trigger_values if t}
     aliases |= {a.replace("-", "_") for a in aliases}
@@ -200,6 +426,9 @@ def parse_skill_doc(skill_dir: Path, *, executable: bool) -> SkillDoc | None:
         aliases=aliases,
         keywords=keywords,
         triggers={t for t in trigger_values if t.strip()},
+        user_invocable=user_invocable,
+        model_invocable=model_invocable,
+        metadata=frontmatter,
     )
 
 
@@ -223,9 +452,13 @@ def _rank_skills(
 
     explicit: list[tuple[float, SkillDoc, set[str], str]] = []
     for skill in all_skills:
-        if slash_cmds & skill.aliases:
-            matched = slash_cmds & skill.aliases
-            explicit.append((10_000.0, skill, set(matched), "slash"))
+        slash_matched = slash_cmds & skill.aliases
+        if slash_matched:
+            if skill.user_invocable:
+                explicit.append((10_000.0, skill, set(slash_matched), "slash"))
+            continue
+
+        if not skill.model_invocable:
             continue
 
         if any(
@@ -336,19 +569,19 @@ def build_skill_context_prompt(
     )
 
     lines: list[str] = []
+    visible_skills = [s for s in all_skills if s.model_invocable or s in selected]
     lines.append("[Skill Compatibility]")
-    lines.append(
-        "These skills come from active SKILL.md files (CoPaw/OpenClaw style).",
-    )
+    lines.append("These skills come from active SKILL.md files (CoPaw/OpenClaw style).")
     lines.append(
         "Use them as operational playbooks; then call concrete tools to execute.",
     )
     lines.append("")
     lines.append("Available skills:")
-    for skill in sorted(all_skills, key=lambda s: _norm(s.name)):
-        mode = "executable-tools" if skill.executable else "guidance-only"
+    for skill in sorted(visible_skills, key=lambda s: _norm(s.name)):
+        execution_mode = "executable-tools" if skill.executable else "guidance-only"
+        invocation_mode = "model-auto" if skill.model_invocable else "user-slash"
         desc = skill.description or "(no description)"
-        lines.append(f"- {skill.name} [{mode}]: {desc}")
+        lines.append(f"- {skill.name} [{execution_mode}, {invocation_mode}]: {desc}")
 
     if not selected:
         return "\n".join(lines)

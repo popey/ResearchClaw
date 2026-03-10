@@ -87,6 +87,19 @@ npm run build
 curl -fsSL https://researchclaw.github.io/install.sh | bash
 ```
 
+## 📝 Recent Updates
+
+### 2026-03-11
+
+- Added a richer model/provider configuration UI:
+  multiple preset platforms, per-provider `base_url`, selectable preset models, and manual model entry in the same card.
+- Extended provider storage and APIs to support multiple models per provider while keeping backward compatibility with the old single-model format.
+- Improved web console stability:
+  fixed `/models` static asset fallback handling, `HEAD /` support, provider names containing `/`, and a React rendering error on object-valued workspace fields.
+- Hardened skill compatibility and routing:
+  `SKILL.md` now recognizes OpenClaw/ClawHub-style metadata such as `user-invocable` and `disable-model-invocation`, and Python skills can be loaded from normalized runtime exports like `tools`, `TOOLS`, `register()`, and `get_tools()`.
+- Fixed experiment tracker skill argument compatibility so extra fields such as `status` and alternate `experiment_id` casing no longer crash tool execution.
+
 ## 🏗️ Architecture
 
 ```

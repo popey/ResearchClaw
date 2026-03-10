@@ -150,7 +150,17 @@ def _normalize_provider_dict(data: dict[str, Any]) -> dict[str, Any]:
     if provider_type not in _ALLOWED_PROVIDER_TYPES:
         provider_type = "other"
 
+    raw_model_names = data.get("model_names")
+    model_names = (
+        [str(item).strip() for item in raw_model_names if str(item).strip()]
+        if isinstance(raw_model_names, list)
+        else []
+    )
     model_name = str(data.get("model_name", "") or "").strip()
+    if model_name and model_name not in model_names:
+        model_names.insert(0, model_name)
+    if not model_name and model_names:
+        model_name = model_names[0]
     api_key = str(data.get("api_key", "") or "").strip()
     base_url = str(data.get("base_url", "") or "").strip()
     if provider_type == "ollama" and base_url:
@@ -163,6 +173,7 @@ def _normalize_provider_dict(data: dict[str, Any]) -> dict[str, Any]:
         "name": name,
         "provider_type": provider_type,
         "model_name": model_name,
+        "model_names": model_names,
         "api_key": api_key,
         "base_url": base_url,
         "enabled": enabled,

@@ -1,7 +1,6 @@
 """Experiment tracker skill – log and track research experiments."""
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -12,12 +11,28 @@ from ....constant import EXPERIMENTS_DIR
 def register():
     """Register experiment tracking tools."""
 
+    def _normalize_key(value: str) -> str:
+        return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+    def _pop_alias(
+        data: dict[str, Any],
+        *aliases: str,
+    ) -> Any:
+        wanted = {_normalize_key(alias) for alias in aliases}
+        for key in list(data.keys()):
+            if _normalize_key(key) in wanted:
+                return data.pop(key)
+        return None
+
     def log_experiment(
-        name: str,
-        parameters: dict[str, Any],
+        name: str = "",
+        parameters: Optional[dict[str, Any]] = None,
         metrics: Optional[dict[str, Any]] = None,
         notes: str = "",
         tags: Optional[list[str]] = None,
+        experiment_id: str = "",
+        status: str = "",
+        **kwargs: Any,
     ) -> dict:
         """Log a research experiment.
 
@@ -33,28 +48,71 @@ def register():
             Additional notes.
         tags:
             Experiment tags for categorisation.
+        experiment_id:
+            Optional explicit experiment ID.
+        status:
+            Optional explicit experiment status.
+        **kwargs:
+            Extra compatibility fields from the model/tool call.
 
         Returns
         -------
         dict
             Logged experiment record.
         """
+        extra = dict(kwargs)
+
+        alias_name = _pop_alias(extra, "experiment_name", "title")
+        alias_parameters = _pop_alias(
+            extra,
+            "params",
+            "config",
+            "hyperparameters",
+            "settings",
+        )
+        alias_metrics = _pop_alias(extra, "results", "metric_values")
+        alias_tags = _pop_alias(extra, "labels")
+        alias_notes = _pop_alias(extra, "description", "comment")
+        alias_experiment_id = _pop_alias(extra, "experiment_id", "id")
+        alias_status = _pop_alias(extra, "status", "state")
+
+        if not name and isinstance(alias_name, str):
+            name = alias_name.strip()
+        if parameters is None and isinstance(alias_parameters, dict):
+            parameters = alias_parameters
+        if metrics is None and isinstance(alias_metrics, dict):
+            metrics = alias_metrics
+        if not notes and isinstance(alias_notes, str):
+            notes = alias_notes
+        if not tags and isinstance(alias_tags, list):
+            tags = [str(item).strip() for item in alias_tags if str(item).strip()]
+        if not experiment_id and isinstance(alias_experiment_id, str):
+            experiment_id = alias_experiment_id.strip()
+        if not status and isinstance(alias_status, str):
+            status = alias_status.strip()
+
         exp_dir = Path(EXPERIMENTS_DIR)
         exp_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().isoformat()
-        experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        experiment_id = experiment_id or f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        name = name.strip() or experiment_id
+        parameters = parameters if isinstance(parameters, dict) else {}
+        metrics = metrics if isinstance(metrics, dict) else {}
+        status = status.strip() or ("completed" if metrics else "running")
 
         record = {
             "experiment_id": experiment_id,
             "name": name,
             "parameters": parameters,
-            "metrics": metrics or {},
+            "metrics": metrics,
             "notes": notes,
             "tags": tags or [],
             "timestamp": timestamp,
-            "status": "completed" if metrics else "running",
+            "status": status,
         }
+        if extra:
+            record["extra"] = extra
 
         # Save to experiments log
         log_file = exp_dir / "experiments.jsonl"

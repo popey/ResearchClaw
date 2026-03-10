@@ -87,6 +87,21 @@ npm run build
 curl -fsSL https://researchclaw.github.io/install.sh | bash
 ```
 
+## 📝 更新记录
+
+### 2026-03-11
+
+- 增强了模型与提供商配置界面：
+  支持主流平台预设、按 provider 配置 `base_url`、预置模型下拉，以及同一卡片内手动新增模型。
+- 扩展了 provider 的存储与接口：
+  现在一个 provider 可以同时配置多个模型，并兼容旧的单模型数据格式。
+- 提升了 Web Console 的稳定性：
+  修复了 `/models` 静态资源缺失时的回退处理、`HEAD /` 请求、名称包含 `/` 的 provider 路由，以及工作区页面对象值直接渲染导致的 React 报错。
+- 强化了 skills 的兼容与触发逻辑：
+  `SKILL.md` 现已兼容 OpenClaw / ClawHub 风格元数据，如 `user-invocable`、`disable-model-invocation`；同时统一了 Python skill 的运行时接入接口，支持 `tools`、`TOOLS`、`register()`、`get_tools()` 等导出形式。
+- 修复了实验追踪 skill 的参数兼容问题：
+  `status`、不同大小写的 `experiment_id` 等额外字段不再导致 tool 调用崩溃。
+
 ## 🏗️ 架构
 
 ```

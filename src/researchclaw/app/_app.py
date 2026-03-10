@@ -419,6 +419,19 @@ def _find_console_dir() -> Path | None:
 _console_dir = _find_console_dir()
 
 if _console_dir:
+    def _console_index_response() -> HTMLResponse | FileResponse:
+        index_path = _console_dir / "index.html"
+        if index_path.exists():
+            return FileResponse(str(index_path))
+        return HTMLResponse(
+            "<h1>ResearchClaw</h1>"
+            "<p>Console build is temporarily unavailable. Rebuild with "
+            "<code>cd console && npm run build</code></p>"
+            f"<p>API is available at <a href='/docs'>/docs</a> (if enabled)</p>"
+            f"<p>Version: {__version__}</p>",
+            status_code=503,
+        )
+
     # Mount static assets
     assets_dir = _console_dir / "assets"
     if assets_dir.exists():
@@ -428,12 +441,12 @@ if _console_dir:
             name="assets",
         )
 
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     async def serve_index():
         """Serve the console SPA index page."""
-        return FileResponse(str(_console_dir / "index.html"))
+        return _console_index_response()
 
-    @app.get("/{path:path}")
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def serve_spa(path: str):
         """SPA fallback – serve index.html for all non-API routes."""
         if path.startswith("api/"):
@@ -443,11 +456,11 @@ if _console_dir:
         if file_path.exists() and file_path.is_file():
             return FileResponse(str(file_path))
 
-        return FileResponse(str(_console_dir / "index.html"))
+        return _console_index_response()
 
 else:
 
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     async def no_console():
         """Fallback when console is not built."""
         return HTMLResponse(
