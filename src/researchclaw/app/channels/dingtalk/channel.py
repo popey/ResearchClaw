@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=too-many-statements,too-many-branches
 # pylint: disable=too-many-return-statements
 """DingTalk Channel.
@@ -225,7 +224,9 @@ class DingTalkChannel(BaseChannel):
 
     def _session_webhook_store_path(self) -> Path:
         """Path to persist session webhook mapping (for cron after restart)."""
-        return Path(WORKING_DIR).expanduser() / "dingtalk_session_webhooks.json"
+        return (
+            Path(WORKING_DIR).expanduser() / "dingtalk_session_webhooks.json"
+        )
 
     def _load_session_webhook_store_from_disk(self) -> None:
         """Load session webhook mapping from disk into memory."""
@@ -1493,7 +1494,6 @@ class DingTalkChannel(BaseChannel):
         try:
             import aiohttp
             import dingtalk_stream
-            from dingtalk_stream import ChatbotMessage
         except ImportError as exc:
             logger.warning(
                 "dingtalk dependencies missing: %s. "

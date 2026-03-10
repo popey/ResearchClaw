@@ -225,7 +225,7 @@ Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgements
 
-ResearchClaw's channel, scheduling, and console interaction design are inspired by the architecture of [CoPaw](https://github.com/agentscope-ai/CoPaw).  
+ResearchClaw's channel, scheduling, and console interaction design are inspired by the architecture of [CoPaw](https://github.com/agentscope-ai/CoPaw).
 Thanks to the CoPaw project for providing a practical and well-validated reference implementation.
 
 ![微信二维码](imgs/wx.jpg)

@@ -19,7 +19,13 @@ import {
   toggleCronJob,
 } from "../api";
 import type { ChannelItem, CronJobItem, CronTaskType } from "../types";
-import { PageHeader, EmptyState, Badge, Toggle, DetailModal } from "../components/ui";
+import {
+  PageHeader,
+  EmptyState,
+  Badge,
+  Toggle,
+  DetailModal,
+} from "../components/ui";
 import { ChannelGlyph, IconBadge } from "../components/icons";
 import { useI18n } from "../i18n";
 
@@ -74,11 +80,11 @@ function extractPrompt(request: CronJobItem["request"]): string {
       if (Array.isArray(anyItem.content)) {
         for (const part of anyItem.content) {
           if (
-            part
-            && typeof part === "object"
-            && (part as any).type === "text"
-            && typeof (part as any).text === "string"
-            && (part as any).text.trim()
+            part &&
+            typeof part === "object" &&
+            (part as any).type === "text" &&
+            typeof (part as any).text === "string" &&
+            (part as any).text.trim()
           ) {
             return (part as any).text;
           }
@@ -96,7 +102,8 @@ function toForm(job: CronJobItem): CronJobForm {
     timezone: job.timezone,
     enabled: job.enabled,
     task_type: job.task_type,
-    content: job.task_type === "text" ? (job.text ?? "") : extractPrompt(job.request),
+    content:
+      job.task_type === "text" ? job.text ?? "" : extractPrompt(job.request),
     channel: job.channel || "console",
     target_user_id: job.target_user_id || "main",
     target_session_id: job.target_session_id || "main",
@@ -107,7 +114,10 @@ function toForm(job: CronJobItem): CronJobForm {
   };
 }
 
-function toPayload(form: CronJobForm, editing: CronJobItem | null): CronJobItem {
+function toPayload(
+  form: CronJobForm,
+  editing: CronJobItem | null,
+): CronJobItem {
   const channel = form.channel.trim() || "console";
   const targetUser = form.target_user_id.trim() || "main";
   const targetSession = form.target_session_id.trim() || "main";
@@ -158,7 +168,10 @@ function toPayload(form: CronJobForm, editing: CronJobItem | null): CronJobItem 
     runtime: {
       max_concurrency: Math.max(1, Math.floor(form.max_concurrency)),
       timeout_seconds: Math.max(1, Math.floor(form.timeout_seconds)),
-      misfire_grace_seconds: Math.max(0, Math.floor(form.misfire_grace_seconds)),
+      misfire_grace_seconds: Math.max(
+        0,
+        Math.floor(form.misfire_grace_seconds),
+      ),
     },
     meta: editing?.meta ?? {},
   };
@@ -217,7 +230,10 @@ export default function CronJobsPage() {
   }
 
   async function onDelete(job: CronJobItem) {
-    if (!window.confirm(t("确认删除定时任务「{name}」吗？", { name: job.name }))) return;
+    if (
+      !window.confirm(t("确认删除定时任务「{name}」吗？", { name: job.name }))
+    )
+      return;
     setDeletingJobId(job.id);
     try {
       await deleteCronJob(job.id);
@@ -364,7 +380,8 @@ export default function CronJobsPage() {
                   {job.channel || "console"}
                 </span>
                 <span style={{ margin: "0 6px" }}>·</span>
-                目标: {job.target_user_id || "main"}/{job.target_session_id || "main"}
+                目标: {job.target_user_id || "main"}/
+                {job.target_session_id || "main"}
                 <span style={{ margin: "0 6px" }}>·</span>
                 模式: {job.mode}
                 <span style={{ margin: "0 6px" }}>·</span>
@@ -384,7 +401,10 @@ export default function CronJobsPage() {
                 <Play size={14} />
                 {runningJobId === job.id ? "运行中..." : "马上运行"}
               </button>
-              <button className="btn-sm btn-secondary" onClick={() => onEdit(job)}>
+              <button
+                className="btn-sm btn-secondary"
+                onClick={() => onEdit(job)}
+              >
                 <Pencil size={14} />
                 编辑
               </button>
@@ -407,7 +427,10 @@ export default function CronJobsPage() {
       </div>
 
       {form && (
-        <DetailModal title={editingJob ? "编辑定时任务" : "新建定时任务"} onClose={closeModal}>
+        <DetailModal
+          title={editingJob ? "编辑定时任务" : "新建定时任务"}
+          onClose={closeModal}
+        >
           <div className="cron-form-grid">
             <label className="cron-form-field cron-form-span-2">
               <span>任务名称</span>
@@ -468,7 +491,9 @@ export default function CronJobsPage() {
               <span>目标 User ID</span>
               <input
                 value={form.target_user_id}
-                onChange={(e) => updateFormField("target_user_id", e.target.value)}
+                onChange={(e) =>
+                  updateFormField("target_user_id", e.target.value)
+                }
                 placeholder="main"
               />
             </label>
@@ -517,7 +542,10 @@ export default function CronJobsPage() {
                 min={1}
                 value={form.max_concurrency}
                 onChange={(e) =>
-                  updateFormField("max_concurrency", Number(e.target.value) || 1)
+                  updateFormField(
+                    "max_concurrency",
+                    Number(e.target.value) || 1,
+                  )
                 }
               />
             </label>
@@ -529,7 +557,10 @@ export default function CronJobsPage() {
                 min={1}
                 value={form.timeout_seconds}
                 onChange={(e) =>
-                  updateFormField("timeout_seconds", Number(e.target.value) || 120)
+                  updateFormField(
+                    "timeout_seconds",
+                    Number(e.target.value) || 120,
+                  )
                 }
               />
             </label>
@@ -550,7 +581,9 @@ export default function CronJobsPage() {
             </label>
 
             <label className="cron-form-field cron-form-span-2">
-              <span>{form.task_type === "text" ? "文本内容" : "Agent 提示词"}</span>
+              <span>
+                {form.task_type === "text" ? "文本内容" : "Agent 提示词"}
+              </span>
               <textarea
                 rows={5}
                 value={form.content}
@@ -565,7 +598,11 @@ export default function CronJobsPage() {
           </div>
 
           <div className="cron-form-actions">
-            <button className="btn-secondary" onClick={closeModal} disabled={saving}>
+            <button
+              className="btn-secondary"
+              onClick={closeModal}
+              disabled={saving}
+            >
               <X size={14} />
               取消
             </button>

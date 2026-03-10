@@ -19,7 +19,10 @@ class OllamaModelInfo(BaseModel):
     name: str = Field(..., description="Model name, e.g. 'llama3:8b'")
     size: int = Field(0, description="Model size in bytes")
     digest: Optional[str] = Field(default=None, description="Model digest")
-    modified_at: Optional[str] = Field(default=None, description="Modified time")
+    modified_at: Optional[str] = Field(
+        default=None,
+        description="Modified time",
+    )
 
     @field_validator("modified_at", mode="before")
     @classmethod

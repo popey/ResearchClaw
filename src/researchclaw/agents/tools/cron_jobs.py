@@ -19,10 +19,15 @@ def _resolve_base_url(base_url: str) -> str:
     if env_url:
         return env_url.rstrip("/")
 
-    host = os.environ.get("RESEARCHCLAW_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
+    host = (
+        os.environ.get("RESEARCHCLAW_HOST", DEFAULT_HOST).strip()
+        or DEFAULT_HOST
+    )
     if host in {"0.0.0.0", "::", "[::]"}:
         host = "127.0.0.1"
-    port = str(os.environ.get("RESEARCHCLAW_PORT", DEFAULT_PORT)).strip() or str(
+    port = str(
+        os.environ.get("RESEARCHCLAW_PORT", DEFAULT_PORT),
+    ).strip() or str(
         DEFAULT_PORT,
     )
     return f"http://{host}:{port}"
@@ -48,11 +53,7 @@ def _http_request(
         data = {"raw": res.text}
 
     if res.status_code >= 400:
-        detail = (
-            data.get("detail")
-            if isinstance(data, dict)
-            else str(data)
-        )
+        detail = data.get("detail") if isinstance(data, dict) else str(data)
         return {
             "ok": False,
             "status_code": res.status_code,

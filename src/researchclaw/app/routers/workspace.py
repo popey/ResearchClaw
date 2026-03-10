@@ -105,7 +105,10 @@ def _make_file_item(
     is_file = exists and path.is_file()
     size = path.stat().st_size if is_file else 0
     modified = (
-        datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        datetime.fromtimestamp(
+            path.stat().st_mtime,
+            tz=timezone.utc,
+        ).isoformat()
         if exists
         else None
     )
@@ -120,7 +123,11 @@ def _make_file_item(
     }
 
 
-def _list_text_files_under_dir(base: Path, *, category: str) -> list[dict[str, Any]]:
+def _list_text_files_under_dir(
+    base: Path,
+    *,
+    category: str,
+) -> list[dict[str, Any]]:
     if not base.exists() or not base.is_dir():
         return []
 
@@ -138,7 +145,10 @@ def _list_text_files_under_dir(base: Path, *, category: str) -> list[dict[str, A
         if rel_depth > _MAX_WALK_DEPTH:
             continue
         # Skills directories only expose SKILL.md content files.
-        if category in {"active_skills", "customized_skills"} and p.name.lower() != "skill.md":
+        if (
+            category in {"active_skills", "customized_skills"}
+            and p.name.lower() != "skill.md"
+        ):
             continue
         rel = _to_rel(p)
         if not rel:
@@ -223,7 +233,9 @@ async def list_workspace_files():
 
     directory_files: list[dict[str, Any]] = []
     for base, category in dir_entries:
-        directory_files.extend(_list_text_files_under_dir(base, category=category))
+        directory_files.extend(
+            _list_text_files_under_dir(base, category=category),
+        )
 
     all_files = sorted(
         core_files + directory_files,
@@ -238,7 +250,9 @@ async def list_workspace_files():
 
 
 @router.get("/file")
-async def get_workspace_file(path: str = Query(..., description="Relative file path")):
+async def get_workspace_file(
+    path: str = Query(..., description="Relative file path"),
+):
     """Read one text file content from WORKING_DIR by relative path."""
     fp = _safe_resolve_relative(path)
     if not fp.exists():
@@ -253,7 +267,10 @@ async def get_workspace_file(path: str = Query(..., description="Relative file p
     if fp.stat().st_size > _MAX_EDITABLE_FILE_SIZE:
         raise HTTPException(status_code=413, detail="file too large to edit")
     if not _is_likely_text(fp):
-        raise HTTPException(status_code=400, detail="binary file is not editable")
+        raise HTTPException(
+            status_code=400,
+            detail="binary file is not editable",
+        )
     try:
         content = fp.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -279,8 +296,15 @@ async def save_workspace_file(req: WorkspaceFileWriteRequest):
     fp = _safe_resolve_relative(req.path)
     if fp.exists() and fp.is_dir():
         raise HTTPException(status_code=400, detail="path is a directory")
-    if fp.suffix.lower() not in _TEXT_SUFFIXES and fp.exists() and not _is_likely_text(fp):
-        raise HTTPException(status_code=400, detail="binary file is not editable")
+    if (
+        fp.suffix.lower() not in _TEXT_SUFFIXES
+        and fp.exists()
+        and not _is_likely_text(fp)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="binary file is not editable",
+        )
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(req.content, encoding="utf-8")
     return {
@@ -317,7 +341,9 @@ async def get_workspace_relations(request: Request):
             jobs = jobs_data.get("jobs") if isinstance(jobs_data, dict) else []
             if isinstance(jobs, list):
                 cron_total = len(jobs)
-                cron_enabled = sum(1 for j in jobs if bool((j or {}).get("enabled", True)))
+                cron_enabled = sum(
+                    1 for j in jobs if bool((j or {}).get("enabled", True))
+                )
         except Exception:
             pass
 
@@ -354,7 +380,9 @@ async def get_workspace_relations(request: Request):
     hb = get_heartbeat_config()
     hb_query_rel = _to_rel(get_heartbeat_query_path())
     channels = config.get("channels", {}) if isinstance(config, dict) else {}
-    available_channels = channels.get("available", []) if isinstance(channels, dict) else []
+    available_channels = (
+        channels.get("available", []) if isinstance(channels, dict) else []
+    )
     if not isinstance(available_channels, list):
         available_channels = []
 
@@ -380,8 +408,14 @@ async def get_workspace_relations(request: Request):
         },
         "config": {
             "available_channels": [str(x) for x in available_channels],
-            "last_dispatch": (config.get("last_dispatch") if isinstance(config, dict) else None),
-            "language": config.get("language") if isinstance(config, dict) else None,
+            "last_dispatch": (
+                config.get("last_dispatch")
+                if isinstance(config, dict)
+                else None
+            ),
+            "language": config.get("language")
+            if isinstance(config, dict)
+            else None,
         },
         "links": [
             "Skills affect both chat and cron(task_type=agent) tool capabilities.",

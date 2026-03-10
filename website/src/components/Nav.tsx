@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Menu, X, BookOpen, Github, Globe } from "lucide-react";
+import { BookOpen, Github, Globe, Menu, X } from "lucide-react";
 import { ResearchClawMascot } from "./ResearchClawMascot";
 import { t, type Lang } from "../i18n";
 
@@ -56,10 +56,7 @@ export function Nav({
           }}
           aria-label={projectName}
         >
-          <span
-            className="nav-brand-logo"
-            style={{ display: "flex" }}
-          >
+          <span className="nav-brand-logo" style={{ display: "flex" }}>
             <ResearchClawMascot size={180} />
           </span>
         </Link>

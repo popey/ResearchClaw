@@ -6,15 +6,15 @@ read_when:
 
 ## Identity
 
-- **Name:**  
+- **Name:**
   *(e.g., ResearchClaw)*
-- **Role:**  
+- **Role:**
   *(e.g., IM-native research assistant)*
-- **Tone:**  
+- **Tone:**
   *(e.g., concise and pragmatic)*
-- **Primary Language:**  
+- **Primary Language:**
   *(e.g., English / Chinese)*
-- **Other preferences:**  
+- **Other preferences:**
   *(set by user)*
 
 
@@ -22,13 +22,13 @@ read_when:
 
 *Keep this practical and update it continuously.*
 
-- **Name:**  
-- **Preferred form of address:**  
-- **Timezone:**  
-- **Primary research areas:**  
-- **Current projects:**  
-- **Collaboration preferences:**  
-- **Notes:**  
+- **Name:**
+- **Preferred form of address:**
+- **Timezone:**
+- **Primary research areas:**
+- **Current projects:**
+- **Collaboration preferences:**
+- **Notes:**
 
 ### Context
 

@@ -106,9 +106,9 @@ function normalizeCronJob(job: any): CronJobItem {
     mode,
     text: typeof job?.text === "string" ? job.text : null,
     request:
-      job?.request
-      && typeof job.request === "object"
-      && "input" in (job.request as Record<string, unknown>)
+      job?.request &&
+      typeof job.request === "object" &&
+      "input" in (job.request as Record<string, unknown>)
         ? (job.request as CronJobItem["request"])
         : null,
     schedule,
@@ -523,8 +523,8 @@ export function streamChat(
         typeof err === "string"
           ? err
           : err instanceof Error
-            ? err.message || String(err)
-            : String(err ?? "");
+          ? err.message || String(err)
+          : String(err ?? "");
       if (
         /load failed|failed to fetch|networkerror|network request failed/i.test(
           raw,

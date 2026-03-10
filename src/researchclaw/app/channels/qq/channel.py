@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches,too-many-statements
 """QQ Channel.
 
@@ -523,7 +522,7 @@ class QQChannel(BaseChannel):
                 err_text = self.bot_prefix + f"Error: {err_msg}"
                 await self.send_content_parts(
                     to_handle,
-                    [{"type": "text", "text": err_text}],
+                    [TextContent(type=ContentType.TEXT, text=err_text)],
                     send_meta,
                 )
             elif accumulated_parts:
@@ -536,12 +535,12 @@ class QQChannel(BaseChannel):
                 await self.send_content_parts(
                     to_handle,
                     [
-                        {
-                            "type": "text",
-                            "text": self.bot_prefix
+                        TextContent(
+                            type=ContentType.TEXT,
+                            text=self.bot_prefix
                             + "An error occurred while processing your "
                             "request.",
-                        },
+                        ),
                     ],
                     send_meta,
                 )
@@ -558,7 +557,12 @@ class QQChannel(BaseChannel):
                 fallback_handle = getattr(request, "user_id", "")
                 await self.send_content_parts(
                     fallback_handle,
-                    [{"type": "text", "text": f"Error: {err_msg}"}],
+                    [
+                        TextContent(
+                            type=ContentType.TEXT,
+                            text=f"Error: {err_msg}",
+                        ),
+                    ],
                     getattr(request, "channel_meta", None) or {},
                 )
             except Exception:

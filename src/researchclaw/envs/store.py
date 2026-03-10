@@ -77,7 +77,10 @@ def _migrate_legacy_envs_json(path: Path) -> None:
     if path.is_file():
         return
     if path.exists() and not path.is_file():
-        logger.error("envs.json path exists but is not a regular file: %s", path)
+        logger.error(
+            "envs.json path exists but is not a regular file: %s",
+            path,
+        )
         return
 
     for legacy in _LEGACY_ENVS_JSON_CANDIDATES:
@@ -127,7 +130,9 @@ def _normalize_profiles(raw: Any) -> list[dict[str, Any]]:
             if not isinstance(item, dict):
                 continue
             name = str(item.get("name", "")).strip() or _DEFAULT_PROFILE
-            vars_map = item.get("vars") if isinstance(item.get("vars"), dict) else {}
+            vars_map = (
+                item.get("vars") if isinstance(item.get("vars"), dict) else {}
+            )
             out.append(
                 {
                     "name": name,
@@ -162,7 +167,11 @@ class EnvStore:
 
     def __init__(self, file_path: str | None = None):
         default_path = get_envs_json_path()
-        self.file_path = Path(file_path).expanduser().resolve() if file_path else default_path
+        self.file_path = (
+            Path(file_path).expanduser().resolve()
+            if file_path
+            else default_path
+        )
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
 
     def list(self) -> list[dict[str, Any]]:
@@ -179,7 +188,11 @@ class EnvStore:
         old_default = _extract_default_vars(items)
 
         profile_name = str(profile.get("name", "")).strip() or _DEFAULT_PROFILE
-        vars_map = profile.get("vars") if isinstance(profile.get("vars"), dict) else {}
+        vars_map = (
+            profile.get("vars")
+            if isinstance(profile.get("vars"), dict)
+            else {}
+        )
         normalized = {
             "name": profile_name,
             "vars": {str(k): str(v) for k, v in vars_map.items()},
@@ -215,7 +228,10 @@ class EnvStore:
             _migrate_legacy_envs_json(self.file_path)
 
         if self.file_path.exists() and not self.file_path.is_file():
-            logger.error("envs.json path exists but is not a regular file: %s", self.file_path)
+            logger.error(
+                "envs.json path exists but is not a regular file: %s",
+                self.file_path,
+            )
             return []
         if not self.file_path.is_file():
             return []
@@ -255,8 +271,13 @@ class EnvStore:
 def load_envs(path: Optional[Path] = None) -> dict[str, str]:
     """Load default-profile env vars as a flat key-value mapping."""
     store = EnvStore(file_path=str(path) if path is not None else None)
-    profile = store.get(_DEFAULT_PROFILE) or {"name": _DEFAULT_PROFILE, "vars": {}}
-    vars_map = profile.get("vars") if isinstance(profile.get("vars"), dict) else {}
+    profile = store.get(_DEFAULT_PROFILE) or {
+        "name": _DEFAULT_PROFILE,
+        "vars": {},
+    }
+    vars_map = (
+        profile.get("vars") if isinstance(profile.get("vars"), dict) else {}
+    )
     return {str(k): str(v) for k, v in vars_map.items()}
 
 

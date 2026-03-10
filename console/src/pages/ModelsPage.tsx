@@ -184,7 +184,8 @@ function inferPresetKey(provider: ProviderItem): string {
     if (preset.provider_type !== providerType) continue;
     if (
       !baseUrl &&
-      PLATFORM_PRESETS.filter((item) => item.provider_type === providerType).length === 1
+      PLATFORM_PRESETS.filter((item) => item.provider_type === providerType)
+        .length === 1
     ) {
       return preset.key;
     }
@@ -201,7 +202,9 @@ function inferPresetKey(provider: ProviderItem): string {
 function groupAvailableModels(models: any[]): Record<string, string[]> {
   const grouped = new Map<string, string[]>();
   for (const item of models) {
-    const provider = String(item?.provider ?? "").trim().toLowerCase();
+    const provider = String(item?.provider ?? "")
+      .trim()
+      .toLowerCase();
     const name = String(item?.name ?? "").trim();
     if (!provider || !name) continue;
     grouped.set(provider, [...(grouped.get(provider) ?? []), name]);
@@ -222,7 +225,11 @@ function buildModelOptions(
   const preset = PRESET_BY_KEY[form.preset_key];
   const presetModels = preset?.model_names ?? [];
   const providerModels = availableModels[form.provider_type] ?? [];
-  return dedupeStrings([...presetModels, ...providerModels, ...form.model_names]);
+  return dedupeStrings([
+    ...presetModels,
+    ...providerModels,
+    ...form.model_names,
+  ]);
 }
 
 function toProviderPayload(form: ProviderFormState): ProviderItem {
@@ -244,9 +251,9 @@ function hasApiKeyRequirement(form: ProviderFormState): boolean {
 export default function ModelsPage() {
   const { t } = useI18n();
   const [providers, setProviders] = useState<ProviderItem[]>([]);
-  const [availableModels, setAvailableModels] = useState<Record<string, string[]>>(
-    {},
-  );
+  const [availableModels, setAvailableModels] = useState<
+    Record<string, string[]>
+  >({});
   const [loaded, setLoaded] = useState(false);
 
   const [showAdd, setShowAdd] = useState(false);
@@ -342,10 +349,16 @@ export default function ModelsPage() {
 
   function addModelRow(mode: "add" | "edit") {
     if (mode === "add") {
-      setAddForm((prev) => ({ ...prev, model_names: [...prev.model_names, ""] }));
+      setAddForm((prev) => ({
+        ...prev,
+        model_names: [...prev.model_names, ""],
+      }));
       return;
     }
-    setEditForm((prev) => ({ ...prev, model_names: [...prev.model_names, ""] }));
+    setEditForm((prev) => ({
+      ...prev,
+      model_names: [...prev.model_names, ""],
+    }));
   }
 
   function removeModelRow(mode: "add" | "edit", index: number) {
@@ -480,10 +493,7 @@ export default function ModelsPage() {
     }
   }
 
-  function renderModelEditor(
-    form: ProviderFormState,
-    mode: "add" | "edit",
-  ) {
+  function renderModelEditor(form: ProviderFormState, mode: "add" | "edit") {
     const options = buildModelOptions(form, availableModels);
     const onModelChange = mode === "add" ? updateAddModel : updateEditModel;
     const datalistId = `model-options-${mode}-${form.preset_key}-${form.provider_type}`;
@@ -504,7 +514,8 @@ export default function ModelsPage() {
               key={`${mode}-model-${index}`}
               style={{
                 display: "grid",
-                gridTemplateColumns: options.length > 0 ? "1fr auto" : "1fr auto",
+                gridTemplateColumns:
+                  options.length > 0 ? "1fr auto" : "1fr auto",
                 gap: 8,
                 alignItems: "center",
               }}
@@ -548,7 +559,8 @@ export default function ModelsPage() {
               添加模型
             </button>
             <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              可直接输入一个新模型名；第一个模型会作为当前默认模型，用于「应用到 Agent」
+              可直接输入一个新模型名；第一个模型会作为当前默认模型，用于「应用到
+              Agent」
             </span>
           </div>
         </div>
@@ -556,17 +568,12 @@ export default function ModelsPage() {
     );
   }
 
-  function renderProviderForm(
-    form: ProviderFormState,
-    mode: "add" | "edit",
-  ) {
+  function renderProviderForm(form: ProviderFormState, mode: "add" | "edit") {
     const preset = PRESET_BY_KEY[form.preset_key] ?? PRESET_BY_KEY.custom;
     const setField = mode === "add" ? setAddField : setEditField;
 
     return (
-      <div
-        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <label className="config-label">平台模板 *</label>
           <select
@@ -583,7 +590,13 @@ export default function ModelsPage() {
               </option>
             ))}
           </select>
-          <div style={{ marginTop: 6, fontSize: 12, color: "var(--color-text-muted)" }}>
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 12,
+              color: "var(--color-text-muted)",
+            }}
+          >
             {preset.description}
           </div>
         </div>
@@ -618,7 +631,10 @@ export default function ModelsPage() {
 
         <div>
           <label className="config-label">
-            <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+            <Key
+              size={12}
+              style={{ marginRight: 4, verticalAlign: "middle" }}
+            />
             API Key
             {mode === "edit" ? "（留空不修改）" : ""}
           </label>
@@ -638,7 +654,10 @@ export default function ModelsPage() {
 
         <div style={{ gridColumn: "1 / -1" }}>
           <label className="config-label">
-            <Globe size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+            <Globe
+              size={12}
+              style={{ marginRight: 4, verticalAlign: "middle" }}
+            />
             Base URL
           </label>
           <input
@@ -758,7 +777,9 @@ export default function ModelsPage() {
                         <div className="data-row-title">
                           {provider.name}
                           <span style={{ marginLeft: 8 }}>
-                            <Badge variant="info">{provider.provider_type}</Badge>
+                            <Badge variant="info">
+                              {provider.provider_type}
+                            </Badge>
                           </span>
                           {provider.enabled && (
                             <span style={{ marginLeft: 6 }}>
@@ -829,7 +850,9 @@ export default function ModelsPage() {
                             title="应用到 Agent（热重载）"
                           >
                             <Play size={13} />
-                            {applyingName === provider.name ? "应用中..." : "应用"}
+                            {applyingName === provider.name
+                              ? "应用中..."
+                              : "应用"}
                           </button>
                         )}
                         <button

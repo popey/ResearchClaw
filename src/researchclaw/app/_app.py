@@ -419,6 +419,7 @@ def _find_console_dir() -> Path | None:
 _console_dir = _find_console_dir()
 
 if _console_dir:
+
     def _console_index_response() -> HTMLResponse | FileResponse:
         index_path = _console_dir / "index.html"
         if index_path.exists():

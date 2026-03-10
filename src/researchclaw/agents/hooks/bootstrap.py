@@ -68,11 +68,16 @@ class BootstrapHook:
             try:
                 self.agent.rebuild_sys_prompt()
             except Exception:
-                logger.debug("rebuild_sys_prompt failed after md init", exc_info=True)
+                logger.debug(
+                    "rebuild_sys_prompt failed after md init",
+                    exc_info=True,
+                )
 
     @staticmethod
     def _normalize_text(text: str) -> str:
-        return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").split("\n")).strip()
+        return "\n".join(
+            line.rstrip() for line in text.replace("\r\n", "\n").split("\n")
+        ).strip()
 
     def _template_path(self, filename: str, language: str) -> Path:
         root = Path(__file__).resolve().parents[1] / "md_files"
@@ -99,7 +104,11 @@ class BootstrapHook:
     @staticmethod
     def _profile_has_placeholders(text: str) -> bool:
         # Empty key-value bullets, e.g. "- **Name:**" / "- **名字：**"
-        if re.search(r"^\s*-\s*\*\*[^*]+\*\*\s*[：:]\s*$", text, flags=re.MULTILINE):
+        if re.search(
+            r"^\s*-\s*\*\*[^*]+\*\*\s*[：:]\s*$",
+            text,
+            flags=re.MULTILINE,
+        ):
             return True
         # Placeholder hint lines in template, e.g. "*(...)*" / "*（...）*"
         if re.search(r"\*\s*[\(（].*?[\)）]\s*\*", text):
@@ -125,7 +134,9 @@ class BootstrapHook:
             if self._is_default_template(filename, language):
                 gaps.append(f"{filename} (template not customized)")
                 continue
-            if filename == "PROFILE.md" and self._profile_has_placeholders(content):
+            if filename == "PROFILE.md" and self._profile_has_placeholders(
+                content,
+            ):
                 gaps.append(f"{filename} (contains placeholders)")
         return gaps
 
@@ -147,7 +158,11 @@ class BootstrapHook:
         )
 
     @staticmethod
-    def _append_original_message(language: str, guidance: str, message: str) -> str:
+    def _append_original_message(
+        language: str,
+        guidance: str,
+        message: str,
+    ) -> str:
         original = (message or "").strip()
         if not original:
             return guidance
@@ -184,7 +199,10 @@ class BootstrapHook:
 
         self._bootstrapped = True
         guidance = build_bootstrap_guidance(language=language).strip()
-        logger.info("First run detected — bootstrap guidance injected [%s]", language)
+        logger.info(
+            "First run detected — bootstrap guidance injected [%s]",
+            language,
+        )
 
         try:
             self._bootstrap_completed_flag.touch(exist_ok=True)

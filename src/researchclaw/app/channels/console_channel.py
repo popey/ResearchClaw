@@ -58,11 +58,13 @@ class ConsoleChannel(BaseChannel):
         bot_prefix: str = "[BOT] ",
         on_reply_sent: OnReplySent = None,
         show_tool_details: bool = True,
+        filter_tool_messages: bool = False,
     ):
         super().__init__(
             process,
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
+            filter_tool_messages=filter_tool_messages,
         )
         self.enabled = enabled
         self.bot_prefix = bot_prefix
@@ -89,6 +91,7 @@ class ConsoleChannel(BaseChannel):
         config: Any,
         on_reply_sent: OnReplySent = None,
         show_tool_details: bool = True,
+        filter_tool_messages: bool = False,
     ) -> "ConsoleChannel":
         return cls(
             process=process,
@@ -96,6 +99,7 @@ class ConsoleChannel(BaseChannel):
             bot_prefix=getattr(config, "bot_prefix", "[BOT] ") or "[BOT] ",
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,
+            filter_tool_messages=filter_tool_messages,
         )
 
     # ── consume ────────────────────────────────────────────────────

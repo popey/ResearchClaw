@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Channel schema: channel type identifiers, routing (ChannelAddress),
 and conversion protocol.

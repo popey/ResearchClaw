@@ -50,8 +50,12 @@ class AgentRunner:
                     from researchclaw.config import load_config
 
                     cfg = load_config(Path(working_dir) / "config.json")
-                    language = str(cfg.get("language", "en") or "en").strip().lower()
-                    include_bootstrap = not (Path(working_dir) / ".bootstrap_completed").exists()
+                    language = (
+                        str(cfg.get("language", "en") or "en").strip().lower()
+                    )
+                    include_bootstrap = not (
+                        Path(working_dir) / ".bootstrap_completed"
+                    ).exists()
                     copied = copy_md_files(
                         language="zh" if language.startswith("zh") else "en",
                         skip_existing=True,
@@ -145,7 +149,10 @@ class AgentRunner:
             if hasattr(self.agent, "rebuild_sys_prompt"):
                 self.agent.rebuild_sys_prompt()
         except Exception:
-            logger.debug("rebuild_sys_prompt failed before chat", exc_info=True)
+            logger.debug(
+                "rebuild_sys_prompt failed before chat",
+                exc_info=True,
+            )
 
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(

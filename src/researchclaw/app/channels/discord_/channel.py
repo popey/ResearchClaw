@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches,too-many-statements
 from __future__ import annotations
 

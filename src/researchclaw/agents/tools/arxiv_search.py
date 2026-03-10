@@ -85,14 +85,18 @@ def arxiv_search(
         page_size = max(
             1,
             min(
-                int(os.environ.get("RESEARCHCLAW_ARXIV_PAGE_SIZE", "25") or "25"),
+                int(
+                    os.environ.get("RESEARCHCLAW_ARXIV_PAGE_SIZE", "25")
+                    or "25",
+                ),
                 max_results,
             ),
         )
         delay_seconds = max(
             1.0,
             float(
-                os.environ.get("RESEARCHCLAW_ARXIV_DELAY_SECONDS", "3.0") or "3.0",
+                os.environ.get("RESEARCHCLAW_ARXIV_DELAY_SECONDS", "3.0")
+                or "3.0",
             ),
         )
         retries = max(
@@ -112,9 +116,15 @@ def arxiv_search(
                 results = []
                 for paper in client.results(search):
                     # Apply date filtering if specified
-                    if date_from and paper.published.strftime("%Y-%m-%d") < date_from:
+                    if (
+                        date_from
+                        and paper.published.strftime("%Y-%m-%d") < date_from
+                    ):
                         continue
-                    if date_to and paper.published.strftime("%Y-%m-%d") > date_to:
+                    if (
+                        date_to
+                        and paper.published.strftime("%Y-%m-%d") > date_to
+                    ):
                         continue
 
                     results.append(

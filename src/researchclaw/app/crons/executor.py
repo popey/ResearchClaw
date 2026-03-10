@@ -67,7 +67,9 @@ class CronExecutor:
         ev_type = str(getattr(event, "type", "") or "").lower()
         if obj == "message" and status == "completed" and ev_type == "content":
             data = getattr(event, "data", None)
-            content = getattr(data, "content", None) if data is not None else None
+            content = (
+                getattr(data, "content", None) if data is not None else None
+            )
             if isinstance(content, list):
                 return self._extract_text_from_content_items(content)
         return ""
@@ -97,14 +99,15 @@ class CronExecutor:
                 if isinstance(inp, list) and inp:
                     first = inp[0] if isinstance(inp[0], dict) else {}
                     contents = (
-                        first.get("content")
-                        if isinstance(first, dict)
-                        else []
+                        first.get("content") if isinstance(first, dict) else []
                     ) or []
                     if isinstance(contents, list):
                         prompt_parts: list[str] = []
                         for c in contents:
-                            if isinstance(c, dict) and str(c.get("type", "")).lower() == "text":
+                            if (
+                                isinstance(c, dict)
+                                and str(c.get("type", "")).lower() == "text"
+                            ):
                                 txt = str(c.get("text", "") or "").strip()
                                 if txt:
                                     prompt_parts.append(txt)
@@ -122,8 +125,15 @@ class CronExecutor:
             # Persist updates after appending messages.
             session_manager._save_session(session)  # noqa: SLF001
             # Keep chats.json in sync when chat manager is attached.
-            chat_manager = getattr(self._runner, "_chat_manager", None)  # noqa: SLF001
-            if chat_manager is not None and hasattr(chat_manager, "get_or_create_chat"):
+            chat_manager = getattr(
+                self._runner,
+                "_chat_manager",
+                None,
+            )  # noqa: SLF001
+            if chat_manager is not None and hasattr(
+                chat_manager,
+                "get_or_create_chat",
+            ):
                 await chat_manager.get_or_create_chat(
                     session_id=session.session_id,
                     user_id=job.dispatch.target.user_id or "cron",

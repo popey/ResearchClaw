@@ -63,7 +63,11 @@ def _task_to_response(task: DownloadTask) -> OllamaDownloadTaskResponse:
     )
 
 
-@router.get("", response_model=List[OllamaModelResponse], summary="List Ollama models")
+@router.get(
+    "",
+    response_model=List[OllamaModelResponse],
+    summary="List Ollama models",
+)
 async def list_ollama_models() -> List[OllamaModelResponse]:
     from ...providers.ollama_manager import OllamaModelManager
     from ...providers.store import get_ollama_host
@@ -77,7 +81,10 @@ async def list_ollama_models() -> List[OllamaModelResponse]:
         ) from exc
     except Exception as exc:
         if _is_ollama_connection_error(exc):
-            logger.warning("Failed to connect to Ollama while listing models: %s", exc)
+            logger.warning(
+                "Failed to connect to Ollama while listing models: %s",
+                exc,
+            )
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -94,8 +101,14 @@ async def list_ollama_models() -> List[OllamaModelResponse]:
     return [OllamaModelResponse(**m.model_dump()) for m in models]
 
 
-@router.post("/download", response_model=OllamaDownloadTaskResponse, summary="Start a background Ollama model pull")
-async def download_ollama_model(body: OllamaDownloadRequest) -> OllamaDownloadTaskResponse:
+@router.post(
+    "/download",
+    response_model=OllamaDownloadTaskResponse,
+    summary="Start a background Ollama model pull",
+)
+async def download_ollama_model(
+    body: OllamaDownloadRequest,
+) -> OllamaDownloadTaskResponse:
     await clear_completed(backend="ollama")
 
     task = await create_task(
@@ -150,7 +163,11 @@ async def _run_pull_in_background(
         await update_status(task_id, DownloadTaskStatus.FAILED, error=str(exc))
 
 
-@router.get("/download-status", response_model=List[OllamaDownloadTaskResponse], summary="Get Ollama download tasks")
+@router.get(
+    "/download-status",
+    response_model=List[OllamaDownloadTaskResponse],
+    summary="Get Ollama download tasks",
+)
 async def get_ollama_download_status() -> List[OllamaDownloadTaskResponse]:
     tasks = await get_tasks(backend="ollama")
     return [_task_to_response(task) for task in tasks]

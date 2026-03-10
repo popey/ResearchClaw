@@ -45,7 +45,11 @@ class DaemonContext:
     restart_callback: Optional[RestartCallback] = None
 
 
-def _get_last_lines(path: Path, lines: int = 100, max_bytes: int = 512 * 1024) -> str:
+def _get_last_lines(
+    path: Path,
+    lines: int = 100,
+    max_bytes: int = 512 * 1024,
+) -> str:
     """Read tail lines from log file with bounded memory."""
     path = Path(path)
     if not path.exists() or not path.is_file():
@@ -101,8 +105,7 @@ async def run_daemon_restart(context: DaemonContext) -> str:
             )
         except RestartInProgressError:
             return (
-                "**Restart skipped**\n\n"
-                "- A restart is already in progress."
+                "**Restart skipped**\n\n" "- A restart is already in progress."
             )
         except Exception as exc:
             return f"**Restart failed**\n\n- {exc}"
@@ -117,7 +120,9 @@ async def run_daemon_restart(context: DaemonContext) -> str:
 def run_daemon_reload_config(context: DaemonContext) -> str:
     try:
         context.load_config_fn()
-        return "**Config reloaded**\n\n- load_config() re-invoked successfully."
+        return (
+            "**Config reloaded**\n\n- load_config() re-invoked successfully."
+        )
     except Exception as exc:
         return f"**Reload failed**\n\n- {exc}"
 
@@ -132,7 +137,10 @@ def run_daemon_version(context: DaemonContext) -> str:
 
 
 def run_daemon_logs(context: DaemonContext, lines: int = 100) -> str:
-    content = _get_last_lines(context.working_dir / "researchclaw.log", lines=lines)
+    content = _get_last_lines(
+        context.working_dir / "researchclaw.log",
+        lines=lines,
+    )
     return f"**Console log (last {lines} lines)**\n\n```\n{content}\n```"
 
 
@@ -161,6 +169,9 @@ def parse_daemon_query(query: str) -> Optional[tuple[str, list[str]]]:
         return (sub, parts[2:] if len(parts) > 2 else [])
 
     if first in DAEMON_SHORT_ALIASES:
-        return (DAEMON_SHORT_ALIASES[first], parts[1:] if len(parts) > 1 else [])
+        return (
+            DAEMON_SHORT_ALIASES[first],
+            parts[1:] if len(parts) > 1 else [],
+        )
 
     return None

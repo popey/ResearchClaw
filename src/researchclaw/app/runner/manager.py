@@ -161,11 +161,7 @@ class AgentRunnerManager:
 
     @staticmethod
     def _build_response_event(error_message: str | None = None) -> Any:
-        err = (
-            SimpleNamespace(message=error_message)
-            if error_message
-            else None
-        )
+        err = SimpleNamespace(message=error_message) if error_message else None
         return SimpleNamespace(
             object="response",
             status="failed" if error_message else "completed",
@@ -255,12 +251,18 @@ class AgentRunnerManager:
         ``object/status/type`` fields expected by channel renderers.
         """
         session_id = self._extract_value(request, "session_id", None)
-        user_id = self._normalize_text(
-            self._extract_value(request, "user_id", ""),
-        ).strip() or "main"
-        channel = self._normalize_text(
-            self._extract_value(request, "channel", DEFAULT_CHANNEL),
-        ).strip() or DEFAULT_CHANNEL
+        user_id = (
+            self._normalize_text(
+                self._extract_value(request, "user_id", ""),
+            ).strip()
+            or "main"
+        )
+        channel = (
+            self._normalize_text(
+                self._extract_value(request, "channel", DEFAULT_CHANNEL),
+            ).strip()
+            or DEFAULT_CHANNEL
+        )
         prompt = self._request_to_prompt(request)
         if not prompt:
             prompt = self._normalize_text(
@@ -364,9 +366,12 @@ class AgentRunnerManager:
                     return
 
                 if event_type == "done":
-                    full_text = self._normalize_text(
-                        self._extract_value(raw_event, "content", ""),
-                    ).strip() or "".join(content_chunks).strip()
+                    full_text = (
+                        self._normalize_text(
+                            self._extract_value(raw_event, "content", ""),
+                        ).strip()
+                        or "".join(content_chunks).strip()
+                    )
                     if full_text:
                         yield self._build_message_event(
                             event_type="content",

@@ -20,7 +20,10 @@ def test_browser_use_open_and_snapshot(monkeypatch) -> None:
 
     monkeypatch.setattr(browser_control, "browse_url", _fake_browse_url)
     browser_control.browser_use(action="start")
-    opened = browser_control.browser_use(action="open", url="https://example.com")
+    opened = browser_control.browser_use(
+        action="open",
+        url="https://example.com",
+    )
     assert opened.get("status") == "opened"
     assert opened["result"]["title"] == "Fake"
 

@@ -28,15 +28,14 @@ const EMPTY_STATE: ChatRuntimeState = {
 
 function canUseStorage(): boolean {
   return (
-    typeof window !== "undefined"
-    && typeof window.localStorage !== "undefined"
+    typeof window !== "undefined" && typeof window.localStorage !== "undefined"
   );
 }
 
 function createSessionId(): string {
   if (
-    typeof crypto !== "undefined"
-    && typeof crypto.randomUUID === "function"
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
   ) {
     return crypto.randomUUID();
   }
@@ -55,9 +54,9 @@ function normalizeMessages(value: unknown): ChatMessage[] {
   return value
     .filter(
       (m) =>
-        m
-        && typeof m === "object"
-        && typeof (m as ChatMessage).content === "string",
+        m &&
+        typeof m === "object" &&
+        typeof (m as ChatMessage).content === "string",
     )
     .map((m) => {
       const msg = m as ChatMessage;
@@ -69,15 +68,12 @@ function normalizeMessages(value: unknown): ChatMessage[] {
           ? msg.toolCalls.map((tc) => ({
               name: String(tc?.name ?? "unknown"),
               arguments:
-                tc?.arguments === undefined
-                  ? undefined
-                  : String(tc.arguments),
-              result:
-                tc?.result === undefined ? undefined : String(tc.result),
+                tc?.arguments === undefined ? undefined : String(tc.arguments),
+              result: tc?.result === undefined ? undefined : String(tc.result),
               status:
-                tc?.status === "running"
-                || tc?.status === "done"
-                || tc?.status === "error"
+                tc?.status === "running" ||
+                tc?.status === "done" ||
+                tc?.status === "error"
                   ? tc.status
                   : undefined,
             }))

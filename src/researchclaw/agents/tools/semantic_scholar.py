@@ -65,8 +65,14 @@ def _semantic_scholar_get(
             resp = client.get(f"{_SEMANTIC_SCHOLAR_BASE}{path}", params=params)
 
             if resp.status_code == 429 and attempt < max_attempts - 1:
-                retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
-                sleep_s = retry_after if retry_after > 0 else backoff_base * (2**attempt)
+                retry_after = _retry_after_seconds(
+                    resp.headers.get("Retry-After"),
+                )
+                sleep_s = (
+                    retry_after
+                    if retry_after > 0
+                    else backoff_base * (2**attempt)
+                )
                 time.sleep(min(max(1.0, sleep_s), 20.0))
                 continue
 

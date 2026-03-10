@@ -142,13 +142,18 @@ def test_build_skill_context_prompt_includes_selected_skill() -> None:
             keywords={"research", "collect", "papers"},
         ),
     ]
-    prompt = build_skill_context_prompt("/research-collect llm agent papers", skills)
+    prompt = build_skill_context_prompt(
+        "/research-collect llm agent papers",
+        skills,
+    )
     assert "Available skills:" in prompt
     assert "Selected skills for current user message:" in prompt
     assert "## SKILL: research-collect" in prompt
 
 
-def test_build_skill_context_prompt_hides_user_only_skill_from_available_list() -> None:
+def test_build_skill_context_prompt_hides_user_only_skill_from_available_list() -> (
+    None
+):
     skills = [
         SkillDoc(
             name="planner",

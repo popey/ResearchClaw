@@ -296,7 +296,10 @@ async def test_provider(name: str):
             if provider.api_key and ptype != "ollama":
                 req.add_header("Authorization", f"Bearer {provider.api_key}")
             try:
-                with urlopen(req, timeout=6) as resp:  # nosec - user config URL
+                with urlopen(
+                    req,
+                    timeout=6,
+                ) as resp:  # nosec - user config URL
                     if 200 <= resp.status < 500:
                         return ProviderTestResponse(
                             success=True,
@@ -326,7 +329,10 @@ async def test_provider(name: str):
         )
 
 
-@router.post("/{name:path}/discover-models", response_model=DiscoverModelsResponse)
+@router.post(
+    "/{name:path}/discover-models",
+    response_model=DiscoverModelsResponse,
+)
 async def discover_models(name: str):
     """Discover candidate models for a provider."""
     try:
@@ -343,7 +349,9 @@ async def discover_models(name: str):
         ptype = (provider.provider_type or "").lower()
         if ptype == "ollama":
             try:
-                from researchclaw.providers.ollama_manager import OllamaModelManager
+                from researchclaw.providers.ollama_manager import (
+                    OllamaModelManager,
+                )
                 from researchclaw.providers.store import get_ollama_host
 
                 models = [

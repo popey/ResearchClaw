@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """DingTalk channel constants."""
 
 # When consumer sends all messages via sessionWebhook, process() skips reply

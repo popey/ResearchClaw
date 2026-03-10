@@ -73,7 +73,10 @@ class MCPManager:
             else:
                 self._client_configs = {}
         except Exception:
-            logger.exception("Failed to load MCP config from %s", self.file_path)
+            logger.exception(
+                "Failed to load MCP config from %s",
+                self.file_path,
+            )
             self._client_configs = {}
 
     async def save(self) -> None:
@@ -81,7 +84,9 @@ class MCPManager:
             data: dict[str, Any] = {}
             if self.file_path.exists():
                 try:
-                    old = json.loads(self.file_path.read_text(encoding="utf-8"))
+                    old = json.loads(
+                        self.file_path.read_text(encoding="utf-8"),
+                    )
                     if isinstance(old, dict):
                         data = old
                 except Exception:
@@ -269,7 +274,10 @@ class MCPManager:
         }
 
     @staticmethod
-    def _rebuild_info_for_config(key: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def _rebuild_info_for_config(
+        key: str,
+        cfg: Dict[str, Any],
+    ) -> Dict[str, Any]:
         return {
             "key": key,
             "name": cfg.get("name", key),

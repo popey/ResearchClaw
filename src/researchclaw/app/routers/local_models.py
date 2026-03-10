@@ -27,7 +27,10 @@ router = APIRouter(prefix="/local-models", tags=["local-models"])
 
 class DownloadRequest(BaseModel):
     repo_id: str = Field(..., description="Hugging Face or ModelScope repo ID")
-    filename: Optional[str] = Field(None, description="Specific file to download")
+    filename: Optional[str] = Field(
+        None,
+        description="Specific file to download",
+    )
     backend: str = Field("llamacpp", description="Backend: llamacpp or mlx")
     source: str = Field(
         "huggingface",
@@ -73,8 +76,14 @@ def _task_to_response(task: DownloadTask) -> DownloadTaskResponse:
     )
 
 
-@router.get("", response_model=List[LocalModelResponse], summary="List downloaded local models")
-async def list_local(backend: Optional[str] = None) -> List[LocalModelResponse]:
+@router.get(
+    "",
+    response_model=List[LocalModelResponse],
+    summary="List downloaded local models",
+)
+async def list_local(
+    backend: Optional[str] = None,
+) -> List[LocalModelResponse]:
     try:
         from ...local_models import BackendType, list_local_models
     except ImportError:
@@ -96,7 +105,11 @@ async def list_local(backend: Optional[str] = None) -> List[LocalModelResponse]:
     ]
 
 
-@router.post("/download", response_model=DownloadTaskResponse, summary="Start a background model download")
+@router.post(
+    "/download",
+    response_model=DownloadTaskResponse,
+    summary="Start a background model download",
+)
 async def download_model(body: DownloadRequest) -> DownloadTaskResponse:
     try:
         from ...local_models import BackendType, DownloadSource
@@ -160,7 +173,10 @@ async def _run_download_in_background(
 
         task = await get_task(task_id)
         if task and task.status == DownloadTaskStatus.CANCELLED:
-            logger.info("Task %s was cancelled after download, cleaning up", task_id)
+            logger.info(
+                "Task %s was cancelled after download, cleaning up",
+                task_id,
+            )
             try:
                 from ...local_models import delete_local_model
 
@@ -179,16 +195,32 @@ async def _run_download_in_background(
             "local_path": info.local_path,
             "display_name": info.display_name,
         }
-        await update_status(task_id, DownloadTaskStatus.COMPLETED, result=result_dict)
-        await push_store_append("console", f"Model downloaded: {info.display_name}")
+        await update_status(
+            task_id,
+            DownloadTaskStatus.COMPLETED,
+            result=result_dict,
+        )
+        await push_store_append(
+            "console",
+            f"Model downloaded: {info.display_name}",
+        )
     except Exception as exc:
         logger.exception("Background model download failed: %s", exc)
         await update_status(task_id, DownloadTaskStatus.FAILED, error=str(exc))
-        await push_store_append("console", f"Model download failed: {body.repo_id} - {exc}")
+        await push_store_append(
+            "console",
+            f"Model download failed: {body.repo_id} - {exc}",
+        )
 
 
-@router.get("/download-status", response_model=List[DownloadTaskResponse], summary="Get active download tasks")
-async def get_download_status(backend: Optional[str] = None) -> List[DownloadTaskResponse]:
+@router.get(
+    "/download-status",
+    response_model=List[DownloadTaskResponse],
+    summary="Get active download tasks",
+)
+async def get_download_status(
+    backend: Optional[str] = None,
+) -> List[DownloadTaskResponse]:
     tasks = await get_tasks(backend=backend)
     return [_task_to_response(task) for task in tasks]
 
@@ -211,7 +243,10 @@ async def delete_local(model_id: str) -> dict:
     return {"status": "deleted", "model_id": model_id}
 
 
-@router.post("/cancel-download/{task_id}", summary="Cancel an active download task")
+@router.post(
+    "/cancel-download/{task_id}",
+    summary="Cancel an active download task",
+)
 async def cancel_download(task_id: str) -> dict:
     success = await cancel_task(task_id)
     if not success:

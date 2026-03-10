@@ -78,7 +78,9 @@ def test_provider_store_multiple_models_round_trip(tmp_path: Path):
     assert item.model_names == ["openai/gpt-5.1", "anthropic/claude-sonnet-4"]
 
 
-def test_provider_store_legacy_single_model_populates_model_names(tmp_path: Path):
+def test_provider_store_legacy_single_model_populates_model_names(
+    tmp_path: Path,
+):
     store = ProviderStore(file_path=str(tmp_path / "providers.json"))
 
     store.save_provider(

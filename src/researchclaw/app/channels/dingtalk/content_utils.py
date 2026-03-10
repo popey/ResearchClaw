@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """DingTalk content parsing and session helpers."""
 
 from __future__ import annotations

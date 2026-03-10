@@ -114,7 +114,9 @@ def _normalize_ollama_base_url(base_url: str) -> str:
     elif path == "/v1/":
         path = "/v1"
 
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, path, parts.query, parts.fragment),
+    )
 
 
 def _base_url_to_ollama_host(base_url: str) -> Optional[str]:
@@ -146,7 +148,9 @@ def _normalize_provider_dict(data: dict[str, Any]) -> dict[str, Any]:
     if not name:
         raise ValueError("provider name cannot be empty")
 
-    provider_type = str(data.get("provider_type", "other") or "other").strip().lower()
+    provider_type = (
+        str(data.get("provider_type", "other") or "other").strip().lower()
+    )
     if provider_type not in _ALLOWED_PROVIDER_TYPES:
         provider_type = "other"
 
@@ -207,7 +211,9 @@ class ProviderStore:
     def __init__(self, file_path: str | None = None):
         default_path = get_providers_json_path()
         self.file_path = (
-            Path(file_path).expanduser().resolve() if file_path else default_path
+            Path(file_path).expanduser().resolve()
+            if file_path
+            else default_path
         )
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
 

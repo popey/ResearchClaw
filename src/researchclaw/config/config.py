@@ -42,11 +42,7 @@ def get_heartbeat_query_path() -> Path:
 def get_heartbeat_config() -> Any:
     """Return heartbeat config as attribute-access object."""
     data = load_config()
-    hb = (
-        data.get("agents", {})
-        .get("defaults", {})
-        .get("heartbeat")
-    )
+    hb = data.get("agents", {}).get("defaults", {}).get("heartbeat")
     if not isinstance(hb, dict):
         hb = {}
 

@@ -98,10 +98,10 @@ export default function WorkspacePage() {
       const existsSelected = fileList.some((f) => f.path === selectedPath);
       if (!selectedPath || !existsSelected) {
         const preferred =
-          fileList.find((f) => f.path === "config.json")
-          || fileList.find((f) => f.path === "AGENTS.md")
-          || fileList.find((f) => f.path === "SOUL.md")
-          || fileList[0];
+          fileList.find((f) => f.path === "config.json") ||
+          fileList.find((f) => f.path === "AGENTS.md") ||
+          fileList.find((f) => f.path === "SOUL.md") ||
+          fileList[0];
         if (preferred) {
           await selectFile(preferred.path);
         }
@@ -220,10 +220,12 @@ export default function WorkspacePage() {
               </div>
               <div className="workspace-rel-meta">
                 channels:{" "}
-                {(relations?.config?.available_channels || []).join(", ") || "-"}
+                {(relations?.config?.available_channels || []).join(", ") ||
+                  "-"}
               </div>
               <div className="workspace-rel-meta">
-                last_dispatch: {fmtLastDispatch(relations?.config?.last_dispatch)}
+                last_dispatch:{" "}
+                {fmtLastDispatch(relations?.config?.last_dispatch)}
               </div>
             </div>
           </div>

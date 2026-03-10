@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=too-many-statements,too-many-branches
 # pylint: disable=too-many-return-statements,unused-argument
 """Feishu (Lark) Channel.

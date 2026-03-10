@@ -19,7 +19,9 @@ class ProviderConfig:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
-        model_names = [str(item).strip() for item in self.model_names if str(item).strip()]
+        model_names = [
+            str(item).strip() for item in self.model_names if str(item).strip()
+        ]
         if self.model_name and self.model_name not in model_names:
             model_names.insert(0, self.model_name)
         if not data["model_name"] and model_names:
@@ -31,7 +33,11 @@ class ProviderConfig:
     def from_dict(cls, data: dict[str, Any]) -> "ProviderConfig":
         raw_model_names = data.get("model_names")
         model_names = (
-            [str(item).strip() for item in raw_model_names if str(item).strip()]
+            [
+                str(item).strip()
+                for item in raw_model_names
+                if str(item).strip()
+            ]
             if isinstance(raw_model_names, list)
             else []
         )

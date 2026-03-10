@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=too-many-return-statements
 """
 Bridge between channels and AgentApp process: factory to build

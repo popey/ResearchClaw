@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint:disable=too-many-return-statements
 from __future__ import annotations
 

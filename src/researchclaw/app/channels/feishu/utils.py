@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Feishu channel pure helpers (session id, sender display, markdown)."""
 
 import json

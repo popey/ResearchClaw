@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """DingTalk Stream callback handler: message -> native dict -> reply."""
 
 from __future__ import annotations
@@ -8,6 +7,16 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from ..base import ContentType, TextContent
+from .constants import SENT_VIA_WEBHOOK
+from .content_utils import (
+    conversation_id_from_chatbot_message,
+    dingtalk_content_from_type,
+    get_type_mapping,
+    sender_from_chatbot_message,
+    session_param_from_webhook_url,
+)
+
+_ChatbotHandlerBase: type[Any]
 
 try:
     import dingtalk_stream
@@ -17,21 +26,20 @@ except ImportError:  # pragma: no cover - optional dependency
     CallbackMessage = Any  # type: ignore[assignment,misc]
     ChatbotMessage = Any  # type: ignore[assignment,misc]
 
-    class _ChatbotHandlerBase:  # pylint: disable=too-few-public-methods
+    class _FallbackChatbotHandlerBase:  # pylint: disable=too-few-public-methods
         def __init__(self, *args, **kwargs):
             del args, kwargs
 
-else:
-    _ChatbotHandlerBase = dingtalk_stream.ChatbotHandler
+    _ChatbotHandlerBase = _FallbackChatbotHandlerBase
 
-from .constants import SENT_VIA_WEBHOOK
-from .content_utils import (
-    conversation_id_from_chatbot_message,
-    dingtalk_content_from_type,
-    get_type_mapping,
-    sender_from_chatbot_message,
-    session_param_from_webhook_url,
-)
+else:
+
+    class _DingTalkChatbotHandlerBase(  # type: ignore[misc]
+        dingtalk_stream.ChatbotHandler,
+    ):
+        """Typed alias wrapper for optional DingTalk base handler."""
+
+    _ChatbotHandlerBase = _DingTalkChatbotHandlerBase
 
 logger = logging.getLogger(__name__)
 

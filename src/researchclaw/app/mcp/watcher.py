@@ -88,7 +88,9 @@ class MCPWatcher:
     def _snapshot(self) -> None:
         try:
             self._last_mtime = (
-                self._config_path.stat().st_mtime if self._config_path.exists() else 0.0
+                self._config_path.stat().st_mtime
+                if self._config_path.exists()
+                else 0.0
             )
         except Exception:
             self._last_mtime = 0.0
@@ -123,7 +125,11 @@ class MCPWatcher:
             name="mcp_reload",
         )
 
-    async def _reload(self, clients: dict[str, dict[str, Any]], new_hash: int) -> None:
+    async def _reload(
+        self,
+        clients: dict[str, dict[str, Any]],
+        new_hash: int,
+    ) -> None:
         try:
             await self._mcp_manager.init_from_config({"clients": clients})
             if self._on_reloaded is not None:
@@ -139,7 +145,5 @@ class MCPWatcher:
             try:
                 await asyncio.sleep(self._poll_interval)
                 await self._check()
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 logger.exception("MCPWatcher: poll iteration failed")

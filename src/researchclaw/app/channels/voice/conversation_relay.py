@@ -152,8 +152,10 @@ class ConversationRelayHandler:
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
                 status_val = (
-                    status.value if hasattr(status, "value") else str(status)
-                ) if status else ""
+                    (status.value if hasattr(status, "value") else str(status))
+                    if status
+                    else ""
+                )
                 completed = status_val == "completed"
 
                 if obj == "message" and completed:
@@ -235,4 +237,6 @@ class ConversationRelayHandler:
             try:
                 await self.ws.close()
             except Exception:
-                logger.exception("Failed to close WebSocket in ConversationRelay")
+                logger.exception(
+                    "Failed to close WebSocket in ConversationRelay",
+                )

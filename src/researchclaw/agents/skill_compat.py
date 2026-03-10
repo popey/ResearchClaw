@@ -142,12 +142,12 @@ def _frontmatter_lookup(
         if isinstance(key, str)
     }
     for key in keys:
-        for variant in {
+        for variant in (
             key,
             key.lower(),
             key.replace("_", "-"),
             key.replace("-", "_"),
-        }:
+        ):
             if variant in frontmatter:
                 return frontmatter[variant]
             lowered_variant = variant.lower()
@@ -292,7 +292,9 @@ def extract_skill_runtime_spec(
         candidate = getattr(module, name, None)
         if not callable(candidate):
             continue
-        tools = _normalize_runtime_tool_map(_call_runtime_entrypoint(candidate, agent))
+        tools = _normalize_runtime_tool_map(
+            _call_runtime_entrypoint(candidate, agent),
+        )
         if tools:
             return SkillRuntimeSpec(tools=tools, entrypoint=name)
 
@@ -569,19 +571,29 @@ def build_skill_context_prompt(
     )
 
     lines: list[str] = []
-    visible_skills = [s for s in all_skills if s.model_invocable or s in selected]
+    visible_skills = [
+        s for s in all_skills if s.model_invocable or s in selected
+    ]
     lines.append("[Skill Compatibility]")
-    lines.append("These skills come from active SKILL.md files (CoPaw/OpenClaw style).")
+    lines.append(
+        "These skills come from active SKILL.md files (CoPaw/OpenClaw style).",
+    )
     lines.append(
         "Use them as operational playbooks; then call concrete tools to execute.",
     )
     lines.append("")
     lines.append("Available skills:")
     for skill in sorted(visible_skills, key=lambda s: _norm(s.name)):
-        execution_mode = "executable-tools" if skill.executable else "guidance-only"
-        invocation_mode = "model-auto" if skill.model_invocable else "user-slash"
+        execution_mode = (
+            "executable-tools" if skill.executable else "guidance-only"
+        )
+        invocation_mode = (
+            "model-auto" if skill.model_invocable else "user-slash"
+        )
         desc = skill.description or "(no description)"
-        lines.append(f"- {skill.name} [{execution_mode}, {invocation_mode}]: {desc}")
+        lines.append(
+            f"- {skill.name} [{execution_mode}, {invocation_mode}]: {desc}",
+        )
 
     if not selected:
         return "\n".join(lines)
@@ -589,7 +601,9 @@ def build_skill_context_prompt(
     lines.append("")
     lines.append("Selected skills for current user message:")
     lines.extend(f"- {s.name}" for s in selected)
-    debug_details = debug_info.get("details") if isinstance(debug_info, dict) else None
+    debug_details = (
+        debug_info.get("details") if isinstance(debug_info, dict) else None
+    )
     if isinstance(debug_details, list) and debug_details:
         lines.append("")
         lines.append("Selection debug:")
@@ -600,8 +614,12 @@ def build_skill_context_prompt(
             score = detail.get("score", "")
             mode = str(detail.get("mode", ""))
             matched = detail.get("matched", [])
-            matched_str = ", ".join(matched[:8]) if isinstance(matched, list) else ""
-            lines.append(f"- {name}: mode={mode}, score={score}, matched=[{matched_str}]")
+            matched_str = (
+                ", ".join(matched[:8]) if isinstance(matched, list) else ""
+            )
+            lines.append(
+                f"- {name}: mode={mode}, score={score}, matched=[{matched_str}]",
+            )
     lines.append("")
     lines.append("Selected skill content:")
 

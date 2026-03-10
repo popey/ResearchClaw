@@ -186,7 +186,6 @@ class CommandHandler:
         """Show reference library summary."""
         try:
             from ..constant import REFERENCES_DIR
-            from pathlib import Path
 
             refs_dir = Path(REFERENCES_DIR)
             bib_files = (
@@ -236,7 +235,9 @@ class CommandHandler:
                 for name in active:
                     lines.append(f"- {name}")
             lines.append("")
-            lines.append("Use `/skills debug <query>` to inspect skill routing.")
+            lines.append(
+                "Use `/skills debug <query>` to inspect skill routing.",
+            )
             return "\n".join(lines)
 
         if not args.strip().startswith("debug"):
@@ -274,7 +275,9 @@ class CommandHandler:
                 mode = item.get("mode", "")
                 score = item.get("score", "")
                 matched = item.get("matched", [])
-                matched_str = ", ".join(matched[:8]) if isinstance(matched, list) else ""
+                matched_str = (
+                    ", ".join(matched[:8]) if isinstance(matched, list) else ""
+                )
                 lines.append(
                     f"- {name}: mode={mode}, score={score}, matched=[{matched_str}]",
                 )

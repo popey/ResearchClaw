@@ -272,7 +272,9 @@ export default function ChatPage() {
 
           {messages.map((msg, idx) => (
             <div key={idx} className={`msg ${msg.role}`}>
-              <div className="msg-avatar">{msg.role === "user" ? "你" : "S"}</div>
+              <div className="msg-avatar">
+                {msg.role === "user" ? "你" : "S"}
+              </div>
               <div className="msg-bubble">
                 {msg.thinking && <ThinkingBlock content={msg.thinking} />}
                 {msg.toolCalls && <ToolCallsBlock calls={msg.toolCalls} />}

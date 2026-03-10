@@ -42,9 +42,10 @@ class VoiceChannel(BaseChannel):
         self._config: Any = None
         self._enabled = False
         self._public_base_url: str = ""
-        self._pending_ws_tokens: collections.OrderedDict[str, None] = (
-            collections.OrderedDict()
-        )
+        self._pending_ws_tokens: collections.OrderedDict[
+            str,
+            None,
+        ] = collections.OrderedDict()
 
     @classmethod
     def from_env(

@@ -115,7 +115,10 @@ def _parse_json_param(value: Optional[str], default: Any = None) -> Any:
 
 
 def _append_console_log(page_id: str, level: str, text: str) -> None:
-    logs = _BROWSER_SESSION.setdefault("console_logs", {}).setdefault(page_id, [])
+    logs = _BROWSER_SESSION.setdefault("console_logs", {}).setdefault(
+        page_id,
+        [],
+    )
     logs.append({"level": level, "text": text, "ts": time.time()})
     if len(logs) > 300:
         del logs[: len(logs) - 300]
@@ -130,7 +133,10 @@ def _append_network_log(
     status: Optional[int],
     ok: bool,
 ) -> None:
-    logs = _BROWSER_SESSION.setdefault("network_logs", {}).setdefault(page_id, [])
+    logs = _BROWSER_SESSION.setdefault("network_logs", {}).setdefault(
+        page_id,
+        [],
+    )
     logs.append(
         {
             "url": url,
@@ -194,10 +200,18 @@ def _attach_page_handlers(page_id: str, page: Any) -> None:
         try:
             if bool(policy.get("accept", True)):
                 dialog.accept(str(policy.get("prompt_text", "") or ""))
-                _append_console_log(page_id, "dialog", f"Accepted dialog: {dialog.type}")
+                _append_console_log(
+                    page_id,
+                    "dialog",
+                    f"Accepted dialog: {dialog.type}",
+                )
             else:
                 dialog.dismiss()
-                _append_console_log(page_id, "dialog", f"Dismissed dialog: {dialog.type}")
+                _append_console_log(
+                    page_id,
+                    "dialog",
+                    f"Dismissed dialog: {dialog.type}",
+                )
         except Exception:
             logger.debug("dialog handler failed", exc_info=True)
 
@@ -227,7 +241,10 @@ def _try_start_playwright_session(*, headed: bool) -> bool:
         _BROWSER_SESSION["current_page_id"] = "default"
         return True
     except Exception:
-        logger.debug("Playwright unavailable; fallback to HTTP mode", exc_info=True)
+        logger.debug(
+            "Playwright unavailable; fallback to HTTP mode",
+            exc_info=True,
+        )
         _stop_playwright_session()
         return False
 
@@ -283,7 +300,12 @@ def _get_or_create_page(page_id: str, *, create: bool = True):
     return page
 
 
-def _resolve_locator(page_id: str, page: Any, ref: Optional[str], selector: Optional[str]):
+def _resolve_locator(
+    page_id: str,
+    page: Any,
+    ref: Optional[str],
+    selector: Optional[str],
+):
     """Resolve a locator from ref or selector."""
     if selector:
         return page.locator(selector)
@@ -295,7 +317,11 @@ def _resolve_locator(page_id: str, page: Any, ref: Optional[str], selector: Opti
             name = meta.get("name")
             nth = int(meta.get("nth", 0) or 0)
             try:
-                locator = page.get_by_role(role, name=name) if name else page.get_by_role(role)
+                locator = (
+                    page.get_by_role(role, name=name)
+                    if name
+                    else page.get_by_role(role)
+                )
                 if nth > 0:
                     locator = locator.nth(nth)
                 return locator
@@ -391,7 +417,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
     In environments without Playwright, falls back to HTTP-only mode.
     """
     action_norm = (action or "").strip().lower()
-    effective_page_id = page_id or str(_BROWSER_SESSION.get("current_page_id", "default"))
+    effective_page_id = page_id or str(
+        _BROWSER_SESSION.get("current_page_id", "default"),
+    )
 
     if action_norm == "start":
         _stop_playwright_session()
@@ -456,7 +484,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
                     import base64
 
                     shot = page.screenshot(full_page=True)
-                    result["screenshot_base64"] = base64.b64encode(shot).decode("utf-8")
+                    result["screenshot_base64"] = base64.b64encode(
+                        shot,
+                    ).decode("utf-8")
             except Exception as e:
                 return {"error": f"Failed to open URL in browser: {e}"}
         else:
@@ -483,7 +513,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "navigate_back requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         try:
             page.go_back()
             return {
@@ -499,7 +531,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
         if _BROWSER_SESSION["backend"] == "playwright":
             page = _get_or_create_page(effective_page_id, create=False)
             if page is None:
-                return {"error": "No active page. Call browser_use action=open first."}
+                return {
+                    "error": "No active page. Call browser_use action=open first.",
+                }
             try:
                 from .browser_snapshot import build_role_snapshot_from_aria
 
@@ -524,13 +558,19 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
                     result["snapshot_path"] = out_path
                 _BROWSER_SESSION["last_result"] = result
                 _BROWSER_SESSION["last_url"] = page.url
-                return {"status": "snapshot", "backend": "playwright", "result": result}
+                return {
+                    "status": "snapshot",
+                    "backend": "playwright",
+                    "result": result,
+                }
             except Exception as e:
                 return {"error": f"Failed to snapshot page: {e}"}
 
         last = _BROWSER_SESSION.get("last_result")
         if not last:
-            return {"error": "No page snapshot available. Call browser_use action=open first."}
+            return {
+                "error": "No page snapshot available. Call browser_use action=open first.",
+            }
         return {
             "status": "snapshot",
             "url": _BROWSER_SESSION.get("last_url", ""),
@@ -545,11 +585,16 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             }
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         try:
             import base64
 
-            out_path = _safe_output_path(path or filename, ".png" if screenshot_type == "png" else ".jpg")
+            out_path = _safe_output_path(
+                path or filename,
+                ".png" if screenshot_type == "png" else ".jpg",
+            )
             shot = page.screenshot(path=out_path, full_page=bool(full_page))
             return {
                 "status": "screenshot",
@@ -560,7 +605,15 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
         except Exception as e:
             return {"error": f"Failed to capture screenshot: {e}"}
 
-    if action_norm in {"click", "type", "fill", "press", "press_key", "scroll", "hover"}:
+    if action_norm in {
+        "click",
+        "type",
+        "fill",
+        "press",
+        "press_key",
+        "scroll",
+        "hover",
+    }:
         if _BROWSER_SESSION["backend"] != "playwright":
             return {
                 "error": (
@@ -571,7 +624,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
 
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
 
         locator = _resolve_locator(
             page_id=effective_page_id,
@@ -614,7 +669,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             elif action_norm in {"press", "press_key"}:
                 press_key = key or text or value
                 if not press_key:
-                    return {"error": "press action requires `key` or `text`/`value`."}
+                    return {
+                        "error": "press action requires `key` or `text`/`value`.",
+                    }
                 page.keyboard.press(str(press_key))
 
             elif action_norm == "scroll":
@@ -641,13 +698,19 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
 
     if action_norm in {"eval", "evaluate", "run_code"}:
         if _BROWSER_SESSION["backend"] != "playwright":
-            return {"error": f"browser_use action={action_norm} requires Playwright runtime."}
+            return {
+                "error": f"browser_use action={action_norm} requires Playwright runtime.",
+            }
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         script = code or text
         if not script:
-            return {"error": f"browser_use action={action_norm} requires `code` or `text`."}
+            return {
+                "error": f"browser_use action={action_norm} requires `code` or `text`.",
+            }
         try:
             locator = _resolve_locator(
                 page_id=effective_page_id,
@@ -673,11 +736,15 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "resize requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         if width <= 0 or height <= 0:
             return {"error": "resize requires positive `width` and `height`."}
         try:
-            page.set_viewport_size({"width": int(width), "height": int(height)})
+            page.set_viewport_size(
+                {"width": int(width), "height": int(height)},
+            )
             return {
                 "status": "resize",
                 "backend": "playwright",
@@ -689,12 +756,22 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": f"Failed resize: {e}"}
 
     if action_norm == "console_messages":
-        logs = _BROWSER_SESSION.get("console_logs", {}).get(effective_page_id, [])
+        logs = _BROWSER_SESSION.get("console_logs", {}).get(
+            effective_page_id,
+            [],
+        )
         if level:
-            logs = [m for m in logs if str(m.get("level", "")).lower() == level.lower()]
+            logs = [
+                m
+                for m in logs
+                if str(m.get("level", "")).lower() == level.lower()
+            ]
         if filename:
             out_path = _safe_output_path(filename, ".json")
-            Path(out_path).write_text(json.dumps(logs, ensure_ascii=False, indent=2), encoding="utf-8")
+            Path(out_path).write_text(
+                json.dumps(logs, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             return {
                 "status": "console_messages",
                 "backend": _BROWSER_SESSION["backend"],
@@ -711,13 +788,23 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
         }
 
     if action_norm == "network_requests":
-        logs = _BROWSER_SESSION.get("network_logs", {}).get(effective_page_id, [])
+        logs = _BROWSER_SESSION.get("network_logs", {}).get(
+            effective_page_id,
+            [],
+        )
         if not include_static:
             dynamic = {"document", "xhr", "fetch", "websocket", "eventsource"}
-            logs = [m for m in logs if str(m.get("resource_type", "")).lower() in dynamic]
+            logs = [
+                m
+                for m in logs
+                if str(m.get("resource_type", "")).lower() in dynamic
+            ]
         if filename:
             out_path = _safe_output_path(filename, ".json")
-            Path(out_path).write_text(json.dumps(logs, ensure_ascii=False, indent=2), encoding="utf-8")
+            Path(out_path).write_text(
+                json.dumps(logs, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             return {
                 "status": "network_requests",
                 "backend": _BROWSER_SESSION["backend"],
@@ -750,7 +837,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "file_upload requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         locator = _resolve_locator(
             page_id=effective_page_id,
             page=page,
@@ -786,13 +875,17 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "fill_form requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
 
         fields = _parse_json_param(fields_json, default=None)
         if fields is None and text:
             fields = _parse_json_param(text, default=None)
         if not isinstance(fields, dict):
-            return {"error": "fill_form requires JSON object in `fields_json` or `text`."}
+            return {
+                "error": "fill_form requires JSON object in `fields_json` or `text`.",
+            }
 
         try:
             updated = 0
@@ -832,7 +925,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "drag requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
 
         src = _resolve_locator(
             page_id=effective_page_id,
@@ -863,7 +958,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "select_option requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         locator = _resolve_locator(
             page_id=effective_page_id,
             page=page,
@@ -896,7 +993,11 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
 
         pages = _BROWSER_SESSION.get("pages", {})
         if tab_action_norm == "list":
-            return {"status": "tabs", "backend": "playwright", "tabs": _collect_tabs()}
+            return {
+                "status": "tabs",
+                "backend": "playwright",
+                "tabs": _collect_tabs(),
+            }
 
         if tab_action_norm == "new":
             target_page_id = effective_page_id
@@ -973,7 +1074,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
 
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
 
         timeout_ms = int(max(wait_time * 1000, wait_seconds * 1000, 1000))
         try:
@@ -1012,7 +1115,9 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             return {"error": "pdf requires Playwright runtime."}
         page = _get_or_create_page(effective_page_id, create=False)
         if page is None:
-            return {"error": "No active page. Call browser_use action=open first."}
+            return {
+                "error": "No active page. Call browser_use action=open first.",
+            }
         try:
             out_path = _safe_output_path(path or filename, ".pdf")
             page.pdf(path=out_path, print_background=True)
@@ -1032,11 +1137,31 @@ def browser_use(  # pylint: disable=too-many-branches,too-many-return-statements
             tab_action="close",
         )
 
-    if action_norm in {"file_upload", "fill_form", "install", "drag", "select_option", "tabs", "wait_for", "pdf", "resize", "console_messages", "network_requests"}:
+    if action_norm in {
+        "file_upload",
+        "fill_form",
+        "install",
+        "drag",
+        "select_option",
+        "tabs",
+        "wait_for",
+        "pdf",
+        "resize",
+        "console_messages",
+        "network_requests",
+    }:
         # handled above; this fallback is here for safety only
-        return {"error": f"Unexpected unsupported path for action={action_norm}."}
+        return {
+            "error": f"Unexpected unsupported path for action={action_norm}.",
+        }
 
-    if frame_selector or element or modifiers_json or start_element or end_element:
+    if (
+        frame_selector
+        or element
+        or modifiers_json
+        or start_element
+        or end_element
+    ):
         logger.debug(
             "browser_use received optional compat fields: frame_selector=%s element=%s",
             frame_selector,

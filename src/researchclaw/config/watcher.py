@@ -20,7 +20,9 @@ DEFAULT_POLL_INTERVAL = 2.0
 
 def _to_namespace(value: Any) -> Any:
     if isinstance(value, dict):
-        return SimpleNamespace(**{k: _to_namespace(v) for k, v in value.items()})
+        return SimpleNamespace(
+            **{k: _to_namespace(v) for k, v in value.items()},
+        )
     if isinstance(value, list):
         return [_to_namespace(v) for v in value]
     return value
@@ -28,7 +30,12 @@ def _to_namespace(value: Any) -> Any:
 
 def _json_hash(value: Any) -> int:
     try:
-        payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
     except Exception:
         payload = str(value)
     return hash(payload)
@@ -64,7 +71,10 @@ class ConfigWatcher:
         if self._task and not self._task.done():
             return
         self._snapshot()
-        self._task = asyncio.create_task(self._poll_loop(), name="config_watcher")
+        self._task = asyncio.create_task(
+            self._poll_loop(),
+            name="config_watcher",
+        )
         logger.info(
             "ConfigWatcher started (poll=%.1fs, path=%s)",
             self._poll_interval,
@@ -119,7 +129,9 @@ class ConfigWatcher:
             available = [
                 k
                 for k, v in out.items()
-                if k != "available" and isinstance(v, dict) and v.get("enabled")
+                if k != "available"
+                and isinstance(v, dict)
+                and v.get("enabled")
             ]
             if not available and out.get("console", {}).get("enabled"):
                 available = ["console"]
@@ -139,12 +151,10 @@ class ConfigWatcher:
         }
 
     @staticmethod
-    def _extract_heartbeat_payload(raw_config: dict[str, Any]) -> dict[str, Any]:
-        hb = (
-            raw_config.get("agents", {})
-            .get("defaults", {})
-            .get("heartbeat")
-        )
+    def _extract_heartbeat_payload(
+        raw_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        hb = raw_config.get("agents", {}).get("defaults", {}).get("heartbeat")
         hb = hb if isinstance(hb, dict) else {}
         if "enabled" not in hb and "heartbeat_enabled" in raw_config:
             hb["enabled"] = bool(raw_config.get("heartbeat_enabled"))
@@ -157,7 +167,9 @@ class ConfigWatcher:
     def _snapshot(self) -> None:
         try:
             self._last_mtime = (
-                self._config_path.stat().st_mtime if self._config_path.exists() else 0.0
+                self._config_path.stat().st_mtime
+                if self._config_path.exists()
+                else 0.0
             )
         except Exception:
             self._last_mtime = 0.0
@@ -168,9 +180,16 @@ class ConfigWatcher:
             k: v for k, v in channels.items() if k != "available"
         }
         self._last_desired_channels = self._desired_channels(channels)
-        self._last_heartbeat_hash = _json_hash(self._extract_heartbeat_payload(raw))
+        self._last_heartbeat_hash = _json_hash(
+            self._extract_heartbeat_payload(raw),
+        )
 
-    def _build_channel(self, name: str, ch_cfg: dict[str, Any], show_tool_details: bool):
+    def _build_channel(
+        self,
+        name: str,
+        ch_cfg: dict[str, Any],
+        show_tool_details: bool,
+    ):
         registry = get_channel_registry()
         ch_cls = registry.get(name)
         if ch_cls is None:
@@ -178,7 +197,9 @@ class ConfigWatcher:
             return None
 
         ns_cfg = _to_namespace(ch_cfg)
-        filter_tool_messages = bool(getattr(ns_cfg, "filter_tool_messages", False))
+        filter_tool_messages = bool(
+            getattr(ns_cfg, "filter_tool_messages", False),
+        )
         try:
             return ch_cls.from_config(
                 self._process,
@@ -205,7 +226,7 @@ class ConfigWatcher:
             set(self._last_channels_dump.keys())
             | set(new_dump.keys())
             | set(self._last_desired_channels)
-            | set(desired_channels)
+            | set(desired_channels),
         )
         for name in names:
             old_cfg = self._last_channels_dump.get(name)
@@ -218,7 +239,10 @@ class ConfigWatcher:
                 if was_running:
                     removed = await self._channel_manager.remove_channel(name)
                     if removed:
-                        logger.info("ConfigWatcher: channel '%s' removed", name)
+                        logger.info(
+                            "ConfigWatcher: channel '%s' removed",
+                            name,
+                        )
                 continue
 
             if new_cfg is None:
@@ -235,13 +259,20 @@ class ConfigWatcher:
                 if old_channel is not None:
                     new_channel = old_channel.clone(_to_namespace(new_cfg))
                 else:
-                    new_channel = self._build_channel(name, new_cfg, show_tool_details)
+                    new_channel = self._build_channel(
+                        name,
+                        new_cfg,
+                        show_tool_details,
+                    )
                 if new_channel is None:
                     continue
                 await self._channel_manager.replace_channel(new_channel)
                 logger.info("ConfigWatcher: channel '%s' reloaded", name)
             except Exception:
-                logger.exception("ConfigWatcher: failed to reload channel '%s'", name)
+                logger.exception(
+                    "ConfigWatcher: failed to reload channel '%s'",
+                    name,
+                )
 
         self._last_channels_dump = new_dump
         self._last_desired_channels = desired_channels
@@ -251,7 +282,10 @@ class ConfigWatcher:
         if new_hash == self._last_heartbeat_hash:
             return
         self._last_heartbeat_hash = new_hash
-        if self._cron_manager is not None and hasattr(self._cron_manager, "reschedule_heartbeat"):
+        if self._cron_manager is not None and hasattr(
+            self._cron_manager,
+            "reschedule_heartbeat",
+        ):
             try:
                 await self._cron_manager.reschedule_heartbeat()
                 logger.info("ConfigWatcher: heartbeat rescheduled")
@@ -280,7 +314,5 @@ class ConfigWatcher:
             try:
                 await asyncio.sleep(self._poll_interval)
                 await self._check()
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 logger.exception("ConfigWatcher: poll iteration failed")
