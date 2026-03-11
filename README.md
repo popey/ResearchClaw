@@ -87,10 +87,30 @@ npm run build
 curl -fsSL https://researchclaw.github.io/install.sh | bash
 ```
 
+### Local CI Checks
+
+Run the same checks used by GitHub Actions before pushing:
+
+```bash
+scripts/check-ci.sh
+```
+
+If dependencies are already installed, use:
+
+```bash
+scripts/check-ci.sh --skip-install
+```
+
 ## 📝 Recent Updates
 
 ### 2026-03-11
 
+- Added automation trigger APIs for external systems:
+  token-protected `/api/automation/triggers/agent` supports async execution, stored run history, and optional multi-channel fan-out delivery (`dispatches` / `fanout_channels`).
+- Expanded control-plane observability:
+  `/api/control/status` now includes runtime snapshots for runner sessions, channel queues/workers, cron runtime stats, and automation success/failure counters.
+- Upgraded Console Status page with operational metrics:
+  registered channel count, queue backlog, in-progress keys, and automation success/failure cards.
 - Added a richer model/provider configuration UI:
   multiple preset platforms, per-provider `base_url`, selectable preset models, and manual model entry in the same card.
 - Extended provider storage and APIs to support multiple models per provider while keeping backward compatibility with the old single-model format.

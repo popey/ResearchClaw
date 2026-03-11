@@ -590,3 +590,62 @@ class ChannelManager:
             }
             for ch in self.channels
         ]
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        """Return lightweight channel runtime observability stats."""
+        snapshot = list(self.channels)
+        by_channel: list[dict[str, Any]] = []
+        total_queue_size = 0
+        total_pending_items = 0
+        total_in_progress = 0
+        total_workers = 0
+        alive_workers = 0
+
+        for ch in snapshot:
+            name = ch.channel
+            q = self._queues.get(name)
+            qsize = q.qsize() if q is not None else 0
+            qmax = q.maxsize if q is not None else 0
+            workers = self._consumer_tasks_by_channel.get(name, [])
+            worker_total = len(workers)
+            worker_alive = sum(1 for task in workers if not task.done())
+            in_progress = sum(
+                1 for (channel_id, _) in self._in_progress if channel_id == name
+            )
+            pending_items = sum(
+                len(items)
+                for (channel_id, _), items in self._pending.items()
+                if channel_id == name
+            )
+
+            total_queue_size += qsize
+            total_pending_items += pending_items
+            total_in_progress += in_progress
+            total_workers += worker_total
+            alive_workers += worker_alive
+
+            by_channel.append(
+                {
+                    "name": name,
+                    "type": ch.__class__.__name__,
+                    "has_queue": q is not None,
+                    "queue_size": qsize,
+                    "queue_maxsize": qmax,
+                    "pending_items": pending_items,
+                    "in_progress_keys": in_progress,
+                    "consumer_workers": worker_total,
+                    "alive_workers": worker_alive,
+                },
+            )
+
+        return {
+            "registered_channels": len(snapshot),
+            "queued_messages": total_queue_size,
+            "pending_messages": total_pending_items,
+            "in_progress_keys": total_in_progress,
+            "consumer_workers": {
+                "total": total_workers,
+                "alive": alive_workers,
+            },
+            "channels": by_channel,
+        }

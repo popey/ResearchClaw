@@ -210,6 +210,35 @@ class CronManager:
             return []
         return await self._repo.list_jobs()
 
+    async def get_runtime_stats(self) -> dict[str, Any]:
+        """Return scheduler/runtime observability snapshot."""
+        persistent_jobs = await self.list_jobs()
+        enabled_persistent = sum(1 for job in persistent_jobs if job.enabled)
+        enabled_registered = sum(
+            1 for job in self._registered_jobs.values() if job.enabled
+        )
+        running_states = sum(
+            1
+            for state in self._states.values()
+            if state.last_status == "running"
+        )
+        errored_states = sum(
+            1
+            for state in self._states.values()
+            if state.last_status == "error"
+        )
+        return {
+            "started": self._started,
+            "scheduler_active": self._scheduler is not None,
+            "registered_jobs_total": len(self._registered_jobs),
+            "registered_jobs_enabled": enabled_registered,
+            "persistent_jobs_total": len(persistent_jobs),
+            "persistent_jobs_enabled": enabled_persistent,
+            "states_tracked": len(self._states),
+            "running_jobs": running_states,
+            "errored_jobs": errored_states,
+        }
+
     async def get_job(self, job_id: str) -> Optional[CronJobSpec]:
         """Get a persistent job by ID."""
         if self._repo is None:

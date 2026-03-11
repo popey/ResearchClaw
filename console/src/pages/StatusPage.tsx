@@ -10,6 +10,9 @@ import {
   Zap,
   Puzzle,
   Heart,
+  Workflow,
+  MessageSquareMore,
+  AlertTriangle,
 } from "lucide-react";
 import {
   getHealth,
@@ -129,32 +132,67 @@ export default function StatusPage() {
       </div>
 
       {control && (
-        <div className="stat-row">
-          <StatCard
-            label="运行模式"
-            value={control.mode || "-"}
-            icon={<Zap size={20} />}
-            variant="brand"
-          />
-          <StatCard
-            label="运行时长"
-            value={
-              control.uptime_seconds
-                ? `${Math.round(control.uptime_seconds)}s`
-                : "-"
-            }
-            icon={<Clock size={20} />}
-            variant="info"
-          />
-          <StatCard
-            label="定时任务"
-            value={
-              Array.isArray(control.cron_jobs) ? control.cron_jobs.length : 0
-            }
-            icon={<RefreshCw size={20} />}
-            variant="warning"
-          />
-        </div>
+        <>
+          <div className="stat-row">
+            <StatCard
+              label="运行模式"
+              value={control.mode || "-"}
+              icon={<Zap size={20} />}
+              variant="brand"
+            />
+            <StatCard
+              label="运行时长"
+              value={
+                control.uptime_seconds
+                  ? `${Math.round(control.uptime_seconds)}s`
+                  : "-"
+              }
+              icon={<Clock size={20} />}
+              variant="info"
+            />
+            <StatCard
+              label="定时任务"
+              value={
+                Array.isArray(control.cron_jobs) ? control.cron_jobs.length : 0
+              }
+              icon={<RefreshCw size={20} />}
+              variant="warning"
+            />
+          </div>
+
+          <div className="stat-row">
+            <StatCard
+              label="注册频道"
+              value={control?.runtime?.channels?.registered_channels ?? 0}
+              icon={<Workflow size={20} />}
+              variant="brand"
+            />
+            <StatCard
+              label="通道队列消息"
+              value={control?.runtime?.channels?.queued_messages ?? 0}
+              icon={<MessageSquareMore size={20} />}
+              variant="info"
+            />
+            <StatCard
+              label="处理中会话键"
+              value={control?.runtime?.channels?.in_progress_keys ?? 0}
+              icon={<Activity size={20} />}
+              variant="warning"
+            />
+            <StatCard
+              label="自动化触发成功"
+              value={control?.runtime?.automation?.succeeded ?? 0}
+              icon={<CheckCircle2 size={20} />}
+              variant="success"
+            />
+            <StatCard
+              label="自动化触发失败"
+              value={control?.runtime?.automation?.failed ?? 0}
+              icon={<AlertTriangle size={20} />}
+              variant="danger"
+            />
+          </div>
+        </>
       )}
     </div>
   );

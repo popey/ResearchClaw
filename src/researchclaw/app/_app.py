@@ -128,6 +128,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.debug("Console push store not initialized", exc_info=True)
 
+    try:
+        from .automation import AutomationRunStore
+
+        max_runs = int(
+            os.environ.get("RESEARCHCLAW_AUTOMATION_MAX_RUNS", "200"),
+        )
+        app.state.automation_store = AutomationRunStore(max_runs=max_runs)
+        logger.info("Automation run store initialized")
+    except Exception:
+        logger.debug("Automation run store not initialized", exc_info=True)
+
     runner = None
     try:
         from .runner.manager import AgentRunnerManager
@@ -344,6 +355,7 @@ async def health_check():
 
 _router_defs: list[tuple[str, str, list[str]]] = [
     ("researchclaw.app.routers.agent", "/api/agent", ["Agent"]),
+    ("researchclaw.app.routers.automation", "/api/automation", ["Automation"]),
     ("researchclaw.app.routers.config", "/api/config", ["Config"]),
     ("researchclaw.app.routers.console", "/api/console", ["Console"]),
     ("researchclaw.app.routers.control", "/api/control", ["Control"]),

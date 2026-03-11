@@ -87,10 +87,30 @@ npm run build
 curl -fsSL https://researchclaw.github.io/install.sh | bash
 ```
 
+### 本地 CI 检查
+
+推送前可直接运行与 GitHub Actions 对齐的检查：
+
+```bash
+scripts/check-ci.sh
+```
+
+如果依赖已经安装好，可跳过安装阶段：
+
+```bash
+scripts/check-ci.sh --skip-install
+```
+
 ## 📝 更新记录
 
 ### 2026-03-11
 
+- 新增自动化触发 API（面向外部系统）：
+  通过 token 保护的 `/api/automation/triggers/agent` 支持异步执行、触发记录留存，以及可选的多频道 fan-out 投递（`dispatches` / `fanout_channels`）。
+- 增强控制面可观测性：
+  `/api/control/status` 新增 runner 会话、频道队列/worker、cron 运行态、自动化成功/失败计数等运行时快照。
+- 升级 Console 状态页运维指标：
+  可直接查看注册频道数、队列积压、处理中键数量，以及自动化成功/失败卡片。
 - 增强了模型与提供商配置界面：
   支持主流平台预设、按 provider 配置 `base_url`、预置模型下拉，以及同一卡片内手动新增模型。
 - 扩展了 provider 的存储与接口：
