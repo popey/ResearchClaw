@@ -21,6 +21,7 @@ import {
   Users,
   Mail,
   ChevronDown,
+  type LucideIcon,
 } from "lucide-react";
 import ChatPage from "./pages/ChatPage";
 import PapersPage from "./pages/PapersPage";
@@ -45,32 +46,52 @@ type NavItem = {
   icon: React.ReactNode;
 };
 
+type NavItemConfig = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  tone:
+    | "brand"
+    | "teal"
+    | "blue"
+    | "green"
+    | "amber"
+    | "danger"
+    | "violet"
+    | "slate";
+};
+
 type NavSection = {
   title: string;
   items: NavItem[];
 };
 
-const navSections: NavSection[] = [
+type NavSectionConfig = {
+  title: string;
+  items: NavItemConfig[];
+};
+
+type TopLink = {
+  label: string;
+  href: string;
+  icon: React.ReactNode;
+};
+
+const navSectionConfigs: NavSectionConfig[] = [
   {
     title: "研究",
     items: [
       {
         to: "/chat",
         label: "AI 对话",
-        icon: (
-          <IconBadge tone="brand" size="sm">
-            <MessageSquare size={14} />
-          </IconBadge>
-        ),
+        icon: MessageSquare,
+        tone: "brand",
       },
       {
         to: "/papers",
         label: "论文检索",
-        icon: (
-          <IconBadge tone="teal" size="sm">
-            <FileText size={14} />
-          </IconBadge>
-        ),
+        icon: FileText,
+        tone: "teal",
       },
     ],
   },
@@ -80,47 +101,32 @@ const navSections: NavSection[] = [
       {
         to: "/channels",
         label: "频道",
-        icon: (
-          <IconBadge tone="blue" size="sm">
-            <Radio size={14} />
-          </IconBadge>
-        ),
+        icon: Radio,
+        tone: "blue",
       },
       {
         to: "/sessions",
         label: "会话",
-        icon: (
-          <IconBadge tone="green" size="sm">
-            <MessageCircle size={14} />
-          </IconBadge>
-        ),
+        icon: MessageCircle,
+        tone: "green",
       },
       {
         to: "/cron-jobs",
         label: "定时任务",
-        icon: (
-          <IconBadge tone="amber" size="sm">
-            <Timer size={14} />
-          </IconBadge>
-        ),
+        icon: Timer,
+        tone: "amber",
       },
       {
         to: "/heartbeat",
         label: "心跳",
-        icon: (
-          <IconBadge tone="danger" size="sm">
-            <Heart size={14} />
-          </IconBadge>
-        ),
+        icon: Heart,
+        tone: "danger",
       },
       {
         to: "/status",
         label: "系统状态",
-        icon: (
-          <IconBadge tone="violet" size="sm">
-            <Activity size={14} />
-          </IconBadge>
-        ),
+        icon: Activity,
+        tone: "violet",
       },
     ],
   },
@@ -130,38 +136,26 @@ const navSections: NavSection[] = [
       {
         to: "/workspace",
         label: "工作区",
-        icon: (
-          <IconBadge tone="slate" size="sm">
-            <FolderOpen size={14} />
-          </IconBadge>
-        ),
+        icon: FolderOpen,
+        tone: "slate",
       },
       {
         to: "/skills",
         label: "技能",
-        icon: (
-          <IconBadge tone="brand" size="sm">
-            <Puzzle size={14} />
-          </IconBadge>
-        ),
+        icon: Puzzle,
+        tone: "brand",
       },
       {
         to: "/mcp",
         label: "MCP",
-        icon: (
-          <IconBadge tone="teal" size="sm">
-            <Cable size={14} />
-          </IconBadge>
-        ),
+        icon: Cable,
+        tone: "teal",
       },
       {
         to: "/agent-config",
         label: "Agent 配置",
-        icon: (
-          <IconBadge tone="violet" size="sm">
-            <Settings size={14} />
-          </IconBadge>
-        ),
+        icon: Settings,
+        tone: "violet",
       },
     ],
   },
@@ -171,30 +165,43 @@ const navSections: NavSection[] = [
       {
         to: "/models",
         label: "模型",
-        icon: (
-          <IconBadge tone="blue" size="sm">
-            <Cpu size={14} />
-          </IconBadge>
-        ),
+        icon: Cpu,
+        tone: "blue",
       },
       {
         to: "/environments",
         label: "环境变量",
-        icon: (
-          <IconBadge tone="amber" size="sm">
-            <KeyRound size={14} />
-          </IconBadge>
-        ),
+        icon: KeyRound,
+        tone: "amber",
       },
     ],
   },
 ];
 
-export default function App() {
-  const location = useLocation();
-  const { locale, setLocale, t } = useI18n();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const topLinks = [
+function renderNavIcon(
+  Icon: LucideIcon,
+  tone: NavItemConfig["tone"],
+): React.ReactNode {
+  return (
+    <IconBadge tone={tone} size="sm">
+      <Icon size={14} />
+    </IconBadge>
+  );
+}
+
+function buildNavSections(): NavSection[] {
+  return navSectionConfigs.map((section) => ({
+    title: section.title,
+    items: section.items.map((item) => ({
+      to: item.to,
+      label: item.label,
+      icon: renderNavIcon(item.icon, item.tone),
+    })),
+  }));
+}
+
+function buildTopLinks(locale: "zh" | "en"): TopLink[] {
+  return [
     {
       label: "GitHub",
       href: "https://github.com/ymx10086/ResearchClaw",
@@ -221,6 +228,14 @@ export default function App() {
       icon: <Github size={14} />,
     },
   ];
+}
+
+export default function App() {
+  const location = useLocation();
+  const { locale, setLocale, t } = useI18n();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const navSections = buildNavSections();
+  const topLinks = buildTopLinks(locale);
 
   return (
     <div className="layout">

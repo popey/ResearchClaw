@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Clock,
   Eye,
@@ -34,6 +34,14 @@ function formatTs(ts?: number): string {
   return d.toLocaleString();
 }
 
+function resolveSessionAgentId(
+  session: SessionItem,
+  activeAgent: string,
+): string | undefined {
+  if (activeAgent === "all") return session.agent_id || undefined;
+  return activeAgent || session.agent_id || undefined;
+}
+
 export default function SessionsPage() {
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -44,16 +52,21 @@ export default function SessionsPage() {
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
 
-  const filteredSessions = sessions.filter((session) => {
-    const haystack = [
-      session.title || "",
-      session.session_id,
-      session.agent_id || "",
-    ]
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(query.trim().toLowerCase());
-  });
+  const queryText = query.trim().toLowerCase();
+  const filteredSessions = useMemo(
+    () =>
+      sessions.filter((session) => {
+        const haystack = [
+          session.title || "",
+          session.session_id,
+          session.agent_id || "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(queryText);
+      }),
+    [queryText, sessions],
+  );
 
   async function onLoad() {
     const [sessionRows, agentRows] = await Promise.all([
@@ -70,10 +83,7 @@ export default function SessionsPage() {
   }, [activeAgent]);
 
   async function onOpen(session: SessionItem) {
-    const targetAgentId =
-      activeAgent === "all"
-        ? session.agent_id
-        : activeAgent || session.agent_id;
+    const targetAgentId = resolveSessionAgentId(session, activeAgent);
     setSelected(
       await getSessionDetail(session.session_id, targetAgentId || undefined),
     );
@@ -81,10 +91,7 @@ export default function SessionsPage() {
 
   async function onDelete(session: SessionItem) {
     const sessionId = session.session_id;
-    const targetAgentId =
-      activeAgent === "all"
-        ? session.agent_id
-        : activeAgent || session.agent_id;
+    const targetAgentId = resolveSessionAgentId(session, activeAgent);
     if (
       !window.confirm(
         t("确认删除会话 {id} 吗？", { id: sessionId.slice(0, 8) }),

@@ -8,6 +8,14 @@ import {
   SurfaceCard,
 } from "../components/ui";
 
+function heartbeatEnabledLabel(
+  heartbeat: { enabled?: boolean } | null,
+  loaded: boolean,
+): string {
+  if (!loaded) return "-";
+  return heartbeat?.enabled ? "Yes" : "No";
+}
+
 export default function HeartbeatPage() {
   const [heartbeat, setHeartbeat] = useState<any>(null);
   const [loaded, setLoaded] = useState(false);
@@ -21,6 +29,8 @@ export default function HeartbeatPage() {
     void onLoad();
   }, []);
 
+  const showEmptyState = !loaded && !heartbeat;
+
   return (
     <div className="panel">
       <PageHeader
@@ -31,7 +41,7 @@ export default function HeartbeatPage() {
           <div className="page-header-meta-row">
             <MetricPill
               label="启用"
-              value={heartbeat?.enabled ? "Yes" : loaded ? "No" : "-"}
+              value={heartbeatEnabledLabel(heartbeat, loaded)}
             />
             <MetricPill label="频率" value={heartbeat?.every || "-"} />
           </div>
@@ -44,7 +54,7 @@ export default function HeartbeatPage() {
         }
       />
 
-      {!loaded && !heartbeat && (
+      {showEmptyState && (
         <EmptyState
           icon={<Heart size={28} />}
           title="检测系统心跳"

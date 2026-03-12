@@ -199,6 +199,14 @@ def _message_meta(update: Any) -> dict:
     }
 
 
+def _resolve_chat_id(
+    to_handle: str,
+    meta: Optional[dict],
+) -> str:
+    payload = meta or {}
+    return payload.get("chat_id") or to_handle
+
+
 class TelegramChannel(BaseChannel):
     """Telegram channel: Bot API polling; session_id = telegram:{chat_id}."""
 
@@ -462,9 +470,7 @@ class TelegramChannel(BaseChannel):
         """Send text to chat_id (to_handle or meta['chat_id'])."""
         if not self.enabled or not self._application:
             return
-        if meta is None:
-            meta = {}
-        chat_id = meta.get("chat_id") or to_handle
+        chat_id = _resolve_chat_id(to_handle, meta)
         if not chat_id:
             logger.warning("telegram send: no chat_id in to_handle or meta")
             return
@@ -480,6 +486,30 @@ class TelegramChannel(BaseChannel):
                 logger.exception("telegram send_message failed")
                 return
 
+    @staticmethod
+    async def _send_media_value(
+        bot: Any,
+        *,
+        chat_id: str,
+        value: str,
+        method_name: str,
+    ) -> None:
+        send_method = getattr(bot, method_name)
+        media_arg_name = {
+            "send_photo": "photo",
+            "send_video": "video",
+            "send_document": "document",
+        }[method_name]
+        if value.startswith("file://"):
+            local_path = value.replace("file://", "")
+            with open(local_path, "rb") as file_obj:
+                await send_method(
+                    chat_id=chat_id,
+                    **{media_arg_name: file_obj},
+                )
+            return
+        await send_method(chat_id=chat_id, **{media_arg_name: value})
+
     async def send_media(
         self,
         to_handle: str,
@@ -489,8 +519,7 @@ class TelegramChannel(BaseChannel):
         """Send a media part (image, video, audio, file) to chat_id."""
         if not self.enabled or not self._application:
             return
-        meta = meta or {}
-        chat_id = meta.get("chat_id") or to_handle
+        chat_id = _resolve_chat_id(to_handle, meta)
         if not chat_id:
             logger.warning(
                 "telegram send_media: no chat_id in to_handle or meta",
@@ -505,32 +534,35 @@ class TelegramChannel(BaseChannel):
         try:
             if part_type == ContentType.IMAGE:
                 image_url = getattr(part, "image_url", None)
-                if image_url and image_url.startswith("file://"):
-                    local_path = image_url.replace("file://", "")
-                    with open(local_path, "rb") as f:
-                        await bot.send_photo(chat_id=chat_id, photo=f)
-                elif image_url:
-                    await bot.send_photo(chat_id=chat_id, photo=image_url)
+                if image_url:
+                    await self._send_media_value(
+                        bot,
+                        chat_id=chat_id,
+                        value=image_url,
+                        method_name="send_photo",
+                    )
             elif part_type == ContentType.VIDEO:
                 video_url = getattr(part, "video_url", None)
-                if video_url and video_url.startswith("file://"):
-                    local_path = video_url.replace("file://", "")
-                    with open(local_path, "rb") as f:
-                        await bot.send_video(chat_id=chat_id, video=f)
-                elif video_url:
-                    await bot.send_video(chat_id=chat_id, video=video_url)
+                if video_url:
+                    await self._send_media_value(
+                        bot,
+                        chat_id=chat_id,
+                        value=video_url,
+                        method_name="send_video",
+                    )
             elif part_type == ContentType.AUDIO:
                 data = getattr(part, "data", None)
                 if data:
                     await bot.send_audio(chat_id=chat_id, audio=data)
             elif part_type == ContentType.FILE:
                 file_url = getattr(part, "file_url", None)
-                if file_url and file_url.startswith("file://"):
-                    local_path = file_url.replace("file://", "")
-                    with open(local_path, "rb") as f:
-                        await bot.send_document(chat_id=chat_id, document=f)
-                elif file_url:
-                    await bot.send_document(chat_id=chat_id, document=file_url)
+                if file_url:
+                    await self._send_media_value(
+                        bot,
+                        chat_id=chat_id,
+                        value=file_url,
+                        method_name="send_document",
+                    )
         except Exception:
             logger.exception("telegram send_media failed")
 

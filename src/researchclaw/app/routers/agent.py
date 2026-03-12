@@ -47,14 +47,33 @@ class AgentsRunningConfig(BaseModel):
     max_input_length: int = DEFAULT_MAX_INPUT_TOKENS
 
 
-def _load_running_config() -> AgentsRunningConfig:
-    config_path = Path(WORKING_DIR) / "config.json"
-    if not config_path.exists():
-        return AgentsRunningConfig()
+def _agent_config_path() -> Path:
+    return Path(WORKING_DIR) / "config.json"
 
+
+def _load_agent_config_payload() -> dict[str, Any]:
+    config_path = _agent_config_path()
+    if not config_path.exists():
+        return {}
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_agent_config_payload(payload: dict[str, Any]) -> None:
+    config_path = _agent_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _load_running_config() -> AgentsRunningConfig:
+    data = _load_agent_config_payload()
+    if not data:
         return AgentsRunningConfig()
 
     return AgentsRunningConfig(
@@ -66,21 +85,21 @@ def _load_running_config() -> AgentsRunningConfig:
 
 
 def _save_running_config(config: AgentsRunningConfig) -> AgentsRunningConfig:
-    config_path = Path(WORKING_DIR) / "config.json"
-    payload: dict[str, Any] = {}
-    if config_path.exists():
-        try:
-            payload = json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
-            payload = {}
-
+    payload = _load_agent_config_payload()
     payload.update(config.model_dump())
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _save_agent_config_payload(payload)
     return config
+
+
+def _get_runner_snapshot(runner: Any) -> dict[str, Any] | None:
+    if not runner or not hasattr(runner, "get_status_snapshot"):
+        return None
+    try:
+        snapshot = runner.get_status_snapshot()
+    except Exception:
+        logger.debug("Failed to load runner status snapshot", exc_info=True)
+        return None
+    return snapshot if isinstance(snapshot, dict) else None
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -137,6 +156,8 @@ async def chat_stream(request: ChatRequest, req: Request):
                 agent_id=request.agent_id,
             ):
                 event["session_id"] = session_id
+                if request.agent_id:
+                    event["agent_id"] = request.agent_id
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e), 'session_id': session_id})}\n\n"
@@ -156,7 +177,12 @@ async def chat_stream(request: ChatRequest, req: Request):
 async def list_tools(req: Request):
     """List available agent tools."""
     runner = getattr(req.app.state, "runner", None)
-    if not runner or not runner.agent:
+    if not runner:
+        return {"tools": []}
+    snapshot = _get_runner_snapshot(runner)
+    if snapshot is not None:
+        return {"tools": list(snapshot.get("tool_names", []) or [])}
+    if not runner.agent:
         return {"tools": []}
     return {"tools": runner.agent.tool_names}
 
@@ -165,6 +191,10 @@ async def list_tools(req: Request):
 async def agent_status(req: Request):
     """Get agent status."""
     runner = getattr(req.app.state, "runner", None)
+    snapshot = _get_runner_snapshot(runner)
+    if snapshot is not None:
+        return snapshot
+
     agents = []
     if runner and hasattr(runner, "list_agents"):
         try:
@@ -177,6 +207,9 @@ async def agent_status(req: Request):
         "tool_count": len(runner.agent.tool_names)
         if runner and runner.agent
         else 0,
+        "tool_names": list(runner.agent.tool_names)
+        if runner and runner.agent
+        else [],
         "agents": agents,
     }
 

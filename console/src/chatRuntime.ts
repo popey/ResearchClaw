@@ -5,6 +5,7 @@ const CHAT_STATE_STORAGE_KEY = "researchclaw.chat.state.v1";
 
 export type ChatRuntimeState = {
   sessionId?: string;
+  agentId?: string;
   messages: ChatMessage[];
   chatLoading: boolean;
   streamContent: string;
@@ -14,11 +15,13 @@ export type ChatRuntimeState = {
 
 type PersistedChatState = Partial<ChatRuntimeState> & {
   sessionId?: string;
+  agentId?: string;
   messages?: ChatMessage[];
 };
 
 const EMPTY_STATE: ChatRuntimeState = {
   sessionId: undefined,
+  agentId: undefined,
   messages: [],
   chatLoading: false,
   streamContent: "",
@@ -92,6 +95,7 @@ function loadInitialState(): ChatRuntimeState {
     return {
       sessionId:
         typeof parsed.sessionId === "string" ? parsed.sessionId : undefined,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : undefined,
       messages: normalizeMessages(parsed.messages),
       // Never resume loading state after full page refresh.
       chatLoading: false,
@@ -108,11 +112,18 @@ let state: ChatRuntimeState = loadInitialState();
 let streamController: AbortController | null = null;
 const listeners = new Set<() => void>();
 
+function clearActiveStream() {
+  if (!streamController) return;
+  streamController.abort();
+  streamController = null;
+}
+
 function persistState() {
   if (!canUseStorage()) return;
   try {
     const payload: PersistedChatState = {
       sessionId: state.sessionId,
+      agentId: state.agentId,
       messages: state.messages,
       chatLoading: state.chatLoading,
       streamContent: state.streamContent,
@@ -142,6 +153,71 @@ function resetStreamFields(prev: ChatRuntimeState): ChatRuntimeState {
     streamThinking: "",
     streamToolCalls: [],
   };
+}
+
+function setStreamPatch(
+  patch: Partial<
+    Pick<
+      ChatRuntimeState,
+      "streamContent" | "streamThinking" | "streamToolCalls" | "chatLoading"
+    >
+  >,
+) {
+  setState((prev) => ({
+    ...prev,
+    ...patch,
+  }));
+}
+
+function updateActiveConversation(
+  sessionId: string,
+  agentId?: string,
+  callback?: (sessionId: string) => void,
+) {
+  setState((prev) => ({
+    ...prev,
+    sessionId,
+    agentId: agentId || prev.agentId,
+  }));
+  callback?.(sessionId);
+}
+
+function pushRunningToolCall(
+  calls: ToolCallInfo[],
+  event: StreamEvent,
+): ToolCallInfo[] {
+  return [
+    ...calls,
+    {
+      name: event.name || "unknown",
+      arguments: event.arguments,
+      status: "running",
+    },
+  ];
+}
+
+function resolveToolResult(
+  calls: ToolCallInfo[],
+  event: StreamEvent,
+): ToolCallInfo[] {
+  const next = [...calls];
+  const idx = next.findIndex(
+    (tc) => tc.name === event.name && tc.status === "running",
+  );
+  if (idx !== -1) {
+    next[idx] = {
+      ...next[idx],
+      result: event.result,
+      status: "done",
+    };
+    return next;
+  }
+  next.push({
+    name: event.name || "unknown",
+    result: event.result,
+    status: "done",
+  });
+  return next;
 }
 
 function finalizeStreamWithContent(finalContent: string) {
@@ -176,36 +252,28 @@ export function getChatRuntimeState(): ChatRuntimeState {
 export function replaceChatConversation(
   sessionId: string | undefined,
   messages: ChatMessage[],
-  options?: { stopStreaming?: boolean },
+  options?: { stopStreaming?: boolean; agentId?: string },
 ) {
   const shouldStop = options?.stopStreaming ?? true;
-  if (shouldStop && streamController) {
-    streamController.abort();
-    streamController = null;
-  }
+  if (shouldStop) clearActiveStream();
 
   setState((prev) => ({
     ...resetStreamFields(prev),
     sessionId,
+    agentId: options?.agentId,
     messages,
     chatLoading: shouldStop ? false : prev.chatLoading,
   }));
 }
 
 export function startNewConversation() {
-  if (streamController) {
-    streamController.abort();
-    streamController = null;
-  }
+  clearActiveStream();
   state = { ...EMPTY_STATE };
   emit();
 }
 
 export function stopChatStreaming() {
-  if (streamController) {
-    streamController.abort();
-    streamController = null;
-  }
+  clearActiveStream();
   if (!state.chatLoading) return;
   const finalContent = state.streamContent || "(已停止)";
   finalizeStreamWithContent(finalContent);
@@ -215,6 +283,7 @@ export function sendChatMessage(
   rawText: string,
   options?: {
     preferredSessionId?: string;
+    preferredAgentId?: string;
     onSessionId?: (sessionId: string) => void;
   },
 ): string | null {
@@ -227,6 +296,7 @@ export function sendChatMessage(
   setState((prev) => ({
     ...resetStreamFields(prev),
     sessionId: activeSessionId,
+    agentId: options?.preferredAgentId || prev.agentId,
     chatLoading: true,
     messages: [...prev.messages, { role: "user", content: text }],
   }));
@@ -235,88 +305,67 @@ export function sendChatMessage(
   let accThinking = "";
   let accToolCalls: ToolCallInfo[] = [];
 
-  streamController = streamChat(text, activeSessionId, (event: StreamEvent) => {
-    if (event.session_id) {
-      setState((prev) => ({ ...prev, sessionId: event.session_id }));
-      options?.onSessionId?.(event.session_id);
-    }
-
-    switch (event.type) {
-      case "thinking":
-        accThinking += event.content || "";
-        setState((prev) => ({ ...prev, streamThinking: accThinking }));
-        break;
-
-      case "content":
-        accContent += event.content || "";
-        setState((prev) => ({ ...prev, streamContent: accContent }));
-        break;
-
-      case "content_replace":
-        accContent = event.content || "";
-        setState((prev) => ({ ...prev, streamContent: accContent }));
-        break;
-
-      case "tool_call":
-        accToolCalls = [
-          ...accToolCalls,
-          {
-            name: event.name || "unknown",
-            arguments: event.arguments,
-            status: "running",
-          },
-        ];
-        setState((prev) => ({
-          ...prev,
-          streamToolCalls: [...accToolCalls],
-        }));
-        break;
-
-      case "tool_result": {
-        const idx = accToolCalls.findIndex(
-          (tc) => tc.name === event.name && tc.status === "running",
+  streamController = streamChat(
+    text,
+    activeSessionId,
+    options?.preferredAgentId || state.agentId,
+    (event: StreamEvent) => {
+      if (event.session_id) {
+        updateActiveConversation(
+          event.session_id,
+          event.agent_id,
+          options?.onSessionId,
         );
-        if (idx !== -1) {
-          accToolCalls[idx] = {
-            ...accToolCalls[idx],
-            result: event.result,
-            status: "done",
-          };
-        } else {
-          accToolCalls.push({
-            name: event.name || "unknown",
-            result: event.result,
-            status: "done",
-          });
+      }
+
+      switch (event.type) {
+        case "thinking":
+          accThinking += event.content || "";
+          setStreamPatch({ streamThinking: accThinking });
+          break;
+
+        case "content":
+          accContent += event.content || "";
+          setStreamPatch({ streamContent: accContent });
+          break;
+
+        case "content_replace":
+          accContent = event.content || "";
+          setStreamPatch({ streamContent: accContent });
+          break;
+
+        case "tool_call":
+          accToolCalls = pushRunningToolCall(accToolCalls, event);
+          setStreamPatch({ streamToolCalls: [...accToolCalls] });
+          break;
+
+        case "tool_result":
+          accToolCalls = resolveToolResult(accToolCalls, event);
+          setStreamPatch({ streamToolCalls: [...accToolCalls] });
+          break;
+
+        case "done": {
+          const finalContent = event.content || accContent;
+          streamController = null;
+          finalizeStreamWithContent(finalContent);
+          break;
         }
-        setState((prev) => ({
-          ...prev,
-          streamToolCalls: [...accToolCalls],
-        }));
-        break;
-      }
 
-      case "done": {
-        const finalContent = event.content || accContent;
-        streamController = null;
-        finalizeStreamWithContent(finalContent);
-        break;
-      }
+        case "error": {
+          const errText = String(event.content || "unknown error");
+          const mergedContent = accContent.trim()
+            ? `${accContent}\n\n[流式中断] ${errText}`
+            : `错误: ${errText}`;
+          streamController = null;
+          finalizeStreamWithContent(mergedContent);
+          break;
+        }
 
-      case "error": {
-        const errText = String(event.content || "unknown error");
-        const mergedContent = accContent.trim()
-          ? `${accContent}\n\n[流式中断] ${errText}`
-          : `错误: ${errText}`;
-        streamController = null;
-        finalizeStreamWithContent(mergedContent);
-        break;
+        default:
+          break;
       }
-
-      default:
-        break;
-    }
-  });
+    },
+  );
 
   return activeSessionId;
 }

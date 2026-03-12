@@ -15,6 +15,12 @@ from researchclaw.constant import WORKING_DIR
 
 logger = logging.getLogger(__name__)
 
+NOT_READY_MESSAGE = (
+    "Scholar is not ready. Please configure your LLM provider first.\n"
+    "Run `researchclaw init` or set up via Settings."
+)
+STREAM_FAILED_MESSAGE = "All model attempts failed before streaming output."
+
 
 class AgentRunnerManager:
     """Coordinates agent runner and session management.
@@ -298,6 +304,40 @@ class AgentRunnerManager:
         out.extend(self._fallback_configs())
         return out
 
+    @staticmethod
+    def _provider_usage_defaults(provider: str, model_name: str) -> dict[str, Any]:
+        return {
+            "provider": provider or "",
+            "model_name": model_name or "",
+            "requests": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+
+    @staticmethod
+    def _provider_usage_key(provider: str, model_name: str) -> str:
+        return f"{provider or 'unknown'}::{model_name or 'unknown'}"
+
+    async def _activate_candidate(
+        self,
+        candidate: dict[str, Any],
+        *,
+        is_fallback: bool,
+    ) -> None:
+        if is_fallback:
+            await self.runner.restart(candidate)
+        else:
+            await self.runner.start(candidate)
+        self._model_config = dict(candidate)
+
+    async def _ensure_runner_ready(self) -> bool:
+        if self.runner.is_running:
+            return True
+        await self.start()
+        return self.runner.is_running
+
     def _record_usage(
         self,
         *,
@@ -321,18 +361,10 @@ class AgentRunnerManager:
         stats["input_tokens"] += input_tokens
         stats["output_tokens"] += output_tokens
 
-        key = f"{provider or 'unknown'}::{model_name or 'unknown'}"
+        key = self._provider_usage_key(provider, model_name)
         per = stats["providers"].setdefault(
             key,
-            {
-                "provider": provider or "",
-                "model_name": model_name or "",
-                "requests": 0,
-                "succeeded": 0,
-                "failed": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-            },
+            self._provider_usage_defaults(provider, model_name),
         )
         per["requests"] += 1
         if success:
@@ -381,9 +413,7 @@ class AgentRunnerManager:
         attempts = self._attempt_chain()
         for idx, candidate in enumerate(attempts):
             try:
-                if idx == 0:
-                    await self.runner.start(candidate)
-                else:
+                if idx > 0:
                     logger.warning(
                         "start fallback: agent=%s provider=%s model=%s try=%s/%s",
                         self.agent_id,
@@ -392,8 +422,10 @@ class AgentRunnerManager:
                         idx + 1,
                         len(attempts),
                     )
-                    await self.runner.restart(candidate)
-                self._model_config = dict(candidate)
+                await self._activate_candidate(
+                    candidate,
+                    is_fallback=idx > 0,
+                )
                 return
             except Exception:
                 if idx == len(attempts) - 1:
@@ -408,14 +440,8 @@ class AgentRunnerManager:
 
     async def chat(self, message: str, session_id: str | None = None) -> str:
         """Send a chat message, creating a session if needed."""
-        if not self.runner.is_running:
-            await self.start()
-
-        if not self.runner.is_running:
-            return (
-                "Scholar is not ready. Please configure your LLM provider first.\n"
-                "Run `researchclaw init` or set up via Settings."
-            )
+        if not await self._ensure_runner_ready():
+            return NOT_READY_MESSAGE
 
         session = self._get_or_create_session(session_id)
         session.add_message("user", message)
@@ -427,8 +453,7 @@ class AgentRunnerManager:
             model_name = str(candidate.get("model_name", "") or "")
             try:
                 if idx > 0:
-                    await self.runner.restart(candidate)
-                    self._model_config = dict(candidate)
+                    await self._activate_candidate(candidate, is_fallback=True)
                 response = await self.runner.chat(message, session.session_id)
                 session.add_message("assistant", response)
                 self.session_manager._save_session(session)
@@ -467,18 +492,9 @@ class AgentRunnerManager:
 
     async def chat_stream(self, message: str, session_id: str | None = None):
         """Stream a chat response, yielding SSE event dicts."""
-        if not self.runner.is_running:
-            await self.start()
-            if not self.runner.is_running:
-                yield {
-                    "type": "error",
-                    "content": (
-                        "Scholar is not ready. Please configure your LLM "
-                        "provider first.\nRun `researchclaw init` or set "
-                        "up via Settings."
-                    ),
-                }
-                return
+        if not await self._ensure_runner_ready():
+            yield {"type": "error", "content": NOT_READY_MESSAGE}
+            return
 
         session = self._get_or_create_session(session_id)
         session.add_message("user", message)
@@ -497,8 +513,7 @@ class AgentRunnerManager:
 
             try:
                 if idx > 0:
-                    await self.runner.restart(candidate)
-                    self._model_config = dict(candidate)
+                    await self._activate_candidate(candidate, is_fallback=True)
                 async for event in self.runner.chat_stream(
                     message,
                     session.session_id,
@@ -632,7 +647,7 @@ class AgentRunnerManager:
             return
         yield {
             "type": "error",
-            "content": "All model attempts failed before streaming output.",
+            "content": STREAM_FAILED_MESSAGE,
         }
 
     async def stream_query(self, request: Any):
@@ -821,12 +836,46 @@ class AgentRunnerManager:
             self.agent_id,
         )
 
-    def _load_model_config(self) -> dict[str, Any]:
-        """Load model config from working directory."""
-        config_path = Path(self.working_dir) / "config.json"
-        if not config_path.exists():
-            return {}
+    def _load_active_provider_config(self) -> dict[str, Any]:
+        """Load the currently enabled provider from provider store."""
         try:
-            return json.loads(config_path.read_text(encoding="utf-8"))
+            from researchclaw.providers.store import ProviderStore
+
+            active = ProviderStore().get_active_provider()
         except Exception:
+            active = None
+
+        if active is None:
             return {}
+
+        data = active.to_dict() if hasattr(active, "to_dict") else {}
+        if not isinstance(data, dict):
+            return {}
+
+        return {
+            "provider": data.get("provider_type", ""),
+            "provider_type": data.get("provider_type", ""),
+            "model_name": data.get("model_name", ""),
+            "api_key": data.get("api_key", ""),
+            "base_url": data.get("base_url", ""),
+        }
+
+    def _load_model_config(self) -> dict[str, Any]:
+        """Load model config from working directory and provider store."""
+        config_path = Path(self.working_dir) / "config.json"
+        loaded: dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                raw = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    loaded = raw
+            except Exception:
+                loaded = {}
+
+        provider_config = self._load_active_provider_config()
+        for key, value in provider_config.items():
+            if loaded.get(key):
+                continue
+            if value:
+                loaded[key] = value
+        return loaded

@@ -4,6 +4,7 @@ import { Download, Save, Settings, SlidersHorizontal } from "lucide-react";
 import { getAgentRunningConfig, updateAgentRunningConfig } from "../api";
 import type { AgentRunningConfig } from "../types";
 import {
+  EmptyState,
   MetricPill,
   NoticeBanner,
   PageHeader,
@@ -27,6 +28,15 @@ export default function AgentConfigPage() {
   useEffect(() => {
     void onLoad();
   }, []);
+
+  function updateNumericField(key: keyof AgentRunningConfig, fallback: number) {
+    return (e: ChangeEvent<HTMLInputElement>) => {
+      setConfig((prev: AgentRunningConfig) => ({
+        ...prev,
+        [key]: Number(e.target.value) || fallback,
+      }));
+    };
+  }
 
   async function onSave() {
     setSaving(true);
@@ -68,19 +78,17 @@ export default function AgentConfigPage() {
       {notice && <NoticeBanner variant="success">{notice}</NoticeBanner>}
 
       {!loaded ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">
-            <Settings size={28} />
-          </div>
-          <h3>加载 Agent 配置</h3>
-          <p>点击上方加载按钮获取当前配置</p>
-          <div className="mt-3">
+        <EmptyState
+          icon={<Settings size={28} />}
+          title="加载 Agent 配置"
+          description="点击上方加载按钮获取当前配置"
+          action={
             <button onClick={onLoad}>
               <Download size={15} />
               加载
             </button>
-          </div>
-        </div>
+          }
+        />
       ) : (
         <div className="dashboard-grid">
           <SurfaceCard
@@ -100,12 +108,7 @@ export default function AgentConfigPage() {
               <input
                 type="number"
                 value={config.max_iters}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setConfig((prev: AgentRunningConfig) => ({
-                    ...prev,
-                    max_iters: Number(e.target.value) || 1,
-                  }))
-                }
+                onChange={updateNumericField("max_iters", 1)}
               />
             </div>
           </SurfaceCard>
@@ -127,12 +130,7 @@ export default function AgentConfigPage() {
               <input
                 type="number"
                 value={config.max_input_length}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setConfig((prev: AgentRunningConfig) => ({
-                    ...prev,
-                    max_input_length: Number(e.target.value) || 1000,
-                  }))
-                }
+                onChange={updateNumericField("max_input_length", 1000)}
               />
             </div>
           </SurfaceCard>

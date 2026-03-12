@@ -233,6 +233,27 @@ async def _send_group_message_async(
     )
 
 
+def _resolve_send_target(
+    to_handle: str,
+    meta: Dict[str, Any],
+) -> tuple[str, str, Optional[str], Optional[str], Optional[str]]:
+    message_type = meta.get("message_type")
+    msg_id = meta.get("message_id")
+    sender_id = meta.get("sender_id") or to_handle
+    channel_id = meta.get("channel_id")
+    group_openid = meta.get("group_openid")
+    if message_type is None:
+        if to_handle.startswith("group:"):
+            message_type = "group"
+            group_openid = to_handle[6:]
+        elif to_handle.startswith("channel:"):
+            message_type = "guild"
+            channel_id = to_handle[8:]
+        else:
+            message_type = "c2c"
+    return message_type, sender_id, channel_id, group_openid, msg_id
+
+
 class QQChannel(BaseChannel):
     """QQ Channel:
     WebSocket events -> Incoming -> process -> HTTP API reply.
@@ -394,20 +415,13 @@ class QQChannel(BaseChannel):
         if had_url:
             logger.info("qq send: stripped URL content for API compatibility")
         meta = meta or {}
-        message_type = meta.get("message_type")
-        msg_id = meta.get("message_id")
-        sender_id = meta.get("sender_id") or to_handle
-        channel_id = meta.get("channel_id")
-        group_openid = meta.get("group_openid")
-        if message_type is None:
-            if to_handle.startswith("group:"):
-                message_type = "group"
-                group_openid = to_handle[6:]
-            elif to_handle.startswith("channel:"):
-                message_type = "guild"
-                channel_id = to_handle[8:]
-            else:
-                message_type = "c2c"
+        (
+            message_type,
+            sender_id,
+            channel_id,
+            group_openid,
+            msg_id,
+        ) = _resolve_send_target(to_handle, meta)
         try:
             token = await self._get_access_token_async()
         except Exception:

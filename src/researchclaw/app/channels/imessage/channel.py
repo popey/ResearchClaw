@@ -292,6 +292,50 @@ ORDER BY m.ROWID ASC
             return
         await asyncio.to_thread(self._send_sync, to_handle, text, file_path)
 
+    @staticmethod
+    def _split_send_parts(
+        parts: List[OutgoingContentPart],
+    ) -> tuple[List[str], List[OutgoingContentPart]]:
+        text_parts: List[str] = []
+        media_parts: List[OutgoingContentPart] = []
+        for part in parts:
+            part_type = getattr(part, "type", None)
+            if part_type == ContentType.TEXT:
+                text_val = getattr(part, "text", None)
+                if text_val:
+                    text_parts.append(text_val)
+            elif part_type == ContentType.REFUSAL:
+                refusal_val = getattr(part, "refusal", None)
+                if refusal_val:
+                    text_parts.append(refusal_val)
+            elif part_type in (
+                ContentType.IMAGE,
+                ContentType.VIDEO,
+                ContentType.AUDIO,
+                ContentType.FILE,
+            ):
+                media_parts.append(part)
+        return text_parts, media_parts
+
+    @staticmethod
+    def _fallback_media_text(part: OutgoingContentPart) -> str:
+        url_candidates = [
+            getattr(part, "url", None),
+            getattr(part, "file_url", None),
+            getattr(part, "image_url", None),
+            getattr(part, "audio_url", None),
+            getattr(part, "video_url", None),
+        ]
+        fallback_url = next((url for url in url_candidates if url), None)
+        if fallback_url:
+            return f"[File: {fallback_url}]"
+        content_type = getattr(
+            getattr(part, "type", None),
+            "value",
+            getattr(part, "type", None),
+        )
+        return f"[File could not be sent ({content_type})]"
+
     async def send_content_parts(
         self,
         to_handle: str,
@@ -304,27 +348,7 @@ ORDER BY m.ROWID ASC
         """
         if not parts:
             return
-
-        text_parts: List[str] = []
-        media_parts: List[OutgoingContentPart] = []
-
-        for p in parts:
-            t = getattr(p, "type", None)
-            if t == ContentType.TEXT:
-                text_val = getattr(p, "text", None)
-                if text_val:
-                    text_parts.append(text_val)
-            elif t == ContentType.REFUSAL:
-                refusal_val = getattr(p, "refusal", None)
-                if refusal_val:
-                    text_parts.append(refusal_val)
-            elif t in (
-                ContentType.IMAGE,
-                ContentType.VIDEO,
-                ContentType.AUDIO,
-                ContentType.FILE,
-            ):
-                media_parts.append(p)
+        text_parts, media_parts = self._split_send_parts(parts)
 
         body = (meta or {}).get("bot_prefix", "") + "\n".join(text_parts)
 
@@ -349,26 +373,7 @@ ORDER BY m.ROWID ASC
                     getattr(media_part, "type", None),
                     exc,
                 )
-                # Try to extract a useful URL or identifier from the media part
-                url_candidates = [
-                    getattr(media_part, "url", None),
-                    getattr(media_part, "file_url", None),
-                    getattr(media_part, "image_url", None),
-                    getattr(media_part, "audio_url", None),
-                    getattr(media_part, "video_url", None),
-                ]
-                fallback_url = next((u for u in url_candidates if u), None)
-                if fallback_url:
-                    fallback_text = f"[File: {fallback_url}]"
-                else:
-                    content_type = getattr(
-                        getattr(media_part, "type", None),
-                        "value",
-                        getattr(media_part, "type", None),
-                    )
-                    fallback_text = (
-                        f"[File could not be sent ({content_type})]"
-                    )
+                fallback_text = self._fallback_media_text(media_part)
                 await self.send(to_handle, fallback_text, meta)
 
     def _extract_url_and_filename(self, part: OutgoingContentPart):

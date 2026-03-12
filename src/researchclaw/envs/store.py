@@ -72,6 +72,40 @@ def _prepare_secret_parent(path: Path) -> None:
     _chmod_best_effort(path.parent, 0o700)
 
 
+def _resolve_store_path(
+    file_path: str | None,
+    *,
+    default_path: Path,
+) -> Path:
+    return (
+        Path(file_path).expanduser().resolve()
+        if file_path
+        else default_path
+    )
+
+
+def _ensure_store_parent(path: Path, *, secure: bool) -> None:
+    if secure:
+        _prepare_secret_parent(path)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _load_store_json(path: Path) -> Any:
+    if path.exists() and not path.is_file():
+        logger.error(
+            "envs.json path exists but is not a regular file: %s",
+            path,
+        )
+        return None
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
+
+
 def _migrate_legacy_envs_json(path: Path) -> None:
     """Copy old envs.json into secret dir once (best effort)."""
     if path.is_file():
@@ -167,10 +201,9 @@ class EnvStore:
 
     def __init__(self, file_path: str | None = None):
         default_path = get_envs_json_path()
-        self.file_path = (
-            Path(file_path).expanduser().resolve()
-            if file_path
-            else default_path
+        self.file_path = _resolve_store_path(
+            file_path,
+            default_path=default_path,
         )
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -226,21 +259,9 @@ class EnvStore:
     def _load(self) -> list[dict[str, Any]]:
         if self.file_path == get_envs_json_path():
             _migrate_legacy_envs_json(self.file_path)
-
-        if self.file_path.exists() and not self.file_path.is_file():
-            logger.error(
-                "envs.json path exists but is not a regular file: %s",
-                self.file_path,
-            )
+        raw = _load_store_json(self.file_path)
+        if raw is None:
             return []
-        if not self.file_path.is_file():
-            return []
-
-        try:
-            raw = json.loads(self.file_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError, ValueError):
-            return []
-
         return _normalize_profiles(raw)
 
     def _save(self, items: list[dict[str, Any]]) -> None:
@@ -249,17 +270,15 @@ class EnvStore:
                 f"envs.json path exists but is not a regular file: {self.file_path}",
             )
 
-        if self.file_path == get_envs_json_path():
-            _prepare_secret_parent(self.file_path)
-        else:
-            self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        is_secure_path = self.file_path == get_envs_json_path()
+        _ensure_store_parent(self.file_path, secure=is_secure_path)
 
         self.file_path.write_text(
             json.dumps(items, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
-        if self.file_path == get_envs_json_path():
+        if is_secure_path:
             _chmod_best_effort(self.file_path, 0o600)
 
 

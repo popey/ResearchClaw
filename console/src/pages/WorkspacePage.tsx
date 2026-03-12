@@ -22,6 +22,7 @@ import type { WorkspaceFileItem } from "../types";
 import {
   Badge,
   EmptyState,
+  Loading,
   MetricPill,
   NoticeBanner,
   PageHeader,
@@ -51,6 +52,22 @@ function fmtLastDispatch(value: unknown): string {
   return parts.length > 0 ? parts.join(" / ") : "-";
 }
 
+function matchesFileQuery(item: WorkspaceFileItem, query: string): boolean {
+  if (!query) return true;
+  return `${item.path} ${item.category}`.toLowerCase().includes(query);
+}
+
+function pickPreferredFile(
+  fileList: WorkspaceFileItem[],
+): WorkspaceFileItem | undefined {
+  return (
+    fileList.find((f) => f.path === "config.json") ||
+    fileList.find((f) => f.path === "AGENTS.md") ||
+    fileList.find((f) => f.path === "SOUL.md") ||
+    fileList[0]
+  );
+}
+
 export default function WorkspacePage() {
   const [workspace, setWorkspace] = useState<any>(null);
   const [relations, setRelations] = useState<any>(null);
@@ -65,15 +82,12 @@ export default function WorkspacePage() {
   const [notice, setNotice] = useState("");
 
   const hasChanges = content !== originalContent;
+  const normalizedFileQuery = fileQuery.trim().toLowerCase();
 
   const grouped = useMemo(() => {
     const out = new Map<string, WorkspaceFileItem[]>();
     for (const item of files) {
-      const query = fileQuery.trim().toLowerCase();
-      if (
-        query &&
-        !`${item.path} ${item.category}`.toLowerCase().includes(query)
-      ) {
+      if (!matchesFileQuery(item, normalizedFileQuery)) {
         continue;
       }
       const group = item.category || "other";
@@ -84,7 +98,7 @@ export default function WorkspacePage() {
       list.sort((a, b) => a.path.localeCompare(b.path));
     }
     return out;
-  }, [files, fileQuery]);
+  }, [files, normalizedFileQuery]);
 
   async function selectFile(path: string) {
     setSelectedPath(path);
@@ -113,11 +127,7 @@ export default function WorkspacePage() {
 
       const existsSelected = fileList.some((f) => f.path === selectedPath);
       if (!selectedPath || !existsSelected) {
-        const preferred =
-          fileList.find((f) => f.path === "config.json") ||
-          fileList.find((f) => f.path === "AGENTS.md") ||
-          fileList.find((f) => f.path === "SOUL.md") ||
-          fileList[0];
+        const preferred = pickPreferredFile(fileList);
         if (preferred) {
           await selectFile(preferred.path);
         }
@@ -350,10 +360,7 @@ export default function WorkspacePage() {
           </div>
 
           {loading ? (
-            <div className="loading-overlay">
-              <div className="spinner" />
-              <span>加载文件中...</span>
-            </div>
+            <Loading text="加载文件中..." />
           ) : (
             <textarea
               className="workspace-editor-textarea"

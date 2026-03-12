@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from researchclaw.config import load_config, save_config
+from researchclaw.config import get_heartbeat_config, load_config, save_config
 from researchclaw.constant import CUSTOM_CHANNELS_DIR, WORKING_DIR
 
 router = APIRouter()
@@ -102,6 +102,78 @@ class ChannelInstallRequest(BaseModel):
     path: str | None = None
     url: str | None = None
     overwrite: bool = False
+
+
+def _load_mutable_config() -> dict[str, Any]:
+    cfg = load_config()
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _empty_cron_stats() -> dict[str, Any]:
+    return {
+        "started": False,
+        "scheduler_active": False,
+        "registered_jobs_total": 0,
+        "registered_jobs_enabled": 0,
+        "persistent_jobs_total": 0,
+        "persistent_jobs_enabled": 0,
+        "states_tracked": 0,
+        "running_jobs": 0,
+        "errored_jobs": 0,
+    }
+
+
+def _empty_channel_stats() -> dict[str, Any]:
+    return {
+        "registered_channels": 0,
+        "queued_messages": 0,
+        "pending_messages": 0,
+        "in_progress_keys": 0,
+        "consumer_workers": {"total": 0, "alive": 0},
+        "channels": [],
+    }
+
+
+def _empty_automation_stats() -> dict[str, Any]:
+    return {
+        "total": 0,
+        "queued": 0,
+        "running": 0,
+        "succeeded": 0,
+        "failed": 0,
+    }
+
+
+def _empty_usage_stats() -> dict[str, Any]:
+    return {
+        "requests": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "fallbacks": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "providers": [],
+        "agents": [],
+    }
+
+
+def _heartbeat_config_defaults(
+    *,
+    enabled: bool,
+    healthy: bool,
+    last_heartbeat: float | None = None,
+    age_seconds: int | None = None,
+) -> dict[str, Any]:
+    hb = get_heartbeat_config()
+    return {
+        "enabled": enabled,
+        "configured": enabled,
+        "last_heartbeat": last_heartbeat,
+        "age_seconds": age_seconds,
+        "healthy": healthy,
+        "every": str(getattr(hb, "every", "30m") or "30m"),
+        "target": str(getattr(hb, "target", "last") or "last"),
+    }
 
 
 def _tail_log_file(path: Path, lines: int = 200) -> str:
@@ -231,17 +303,7 @@ async def _get_control_cron_jobs(cron: Any) -> list[Any]:
 async def _get_cron_runtime_stats(cron: Any) -> dict[str, Any]:
     """Best-effort cron runtime stats for observability."""
     if cron is None:
-        return {
-            "started": False,
-            "scheduler_active": False,
-            "registered_jobs_total": 0,
-            "registered_jobs_enabled": 0,
-            "persistent_jobs_total": 0,
-            "persistent_jobs_enabled": 0,
-            "states_tracked": 0,
-            "running_jobs": 0,
-            "errored_jobs": 0,
-        }
+        return _empty_cron_stats()
     if hasattr(cron, "get_runtime_stats"):
         try:
             stats = await cron.get_runtime_stats()
@@ -273,19 +335,15 @@ def _get_runner_runtime_stats(runner: Any) -> dict[str, Any]:
     if runner is None:
         return {
             "running": False,
+            "agent_id": "",
+            "agent_name": "",
+            "tool_count": 0,
+            "default_agent_id": "",
             "session_count": 0,
             "model_provider": "",
             "model_name": "",
             "agents": [],
-            "usage": {
-                "requests": 0,
-                "succeeded": 0,
-                "failed": 0,
-                "fallbacks": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "providers": [],
-            },
+            "usage": _empty_usage_stats(),
         }
     session_count = 0
     try:
@@ -297,22 +355,29 @@ def _get_runner_runtime_stats(runner: Any) -> dict[str, Any]:
         session_count = 0
 
     model_cfg = {}
+    runner_for_status = getattr(runner, "runner", None)
+    snapshot: dict[str, Any] = {}
+    if hasattr(runner, "get_status_snapshot"):
+        try:
+            snapshot = runner.get_status_snapshot()
+        except Exception:
+            snapshot = {}
+    if hasattr(runner, "get_status_manager"):
+        try:
+            _, manager = runner.get_status_manager()
+            if manager is not None:
+                runner_for_status = getattr(manager, "runner", runner_for_status)
+        except Exception:
+            runner_for_status = getattr(runner, "runner", None)
     try:
-        runner_impl = getattr(runner, "runner", None)
-        if runner_impl is not None:
-            model_cfg = getattr(runner_impl, "_last_model_config", {}) or {}
+        if runner_for_status is not None:
+            model_cfg = (
+                getattr(runner_for_status, "_last_model_config", {}) or {}
+            )
     except Exception:
         model_cfg = {}
 
-    usage: dict[str, Any] = {
-        "requests": 0,
-        "succeeded": 0,
-        "failed": 0,
-        "fallbacks": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "providers": [],
-    }
+    usage: dict[str, Any] = _empty_usage_stats()
     try:
         if hasattr(runner, "list_usage_stats"):
             stats = runner.list_usage_stats()
@@ -326,28 +391,64 @@ def _get_runner_runtime_stats(runner: Any) -> dict[str, Any]:
         pass
 
     return {
-        "running": bool(getattr(runner, "is_running", False)),
+        "running": bool(
+            snapshot.get("running", getattr(runner, "is_running", False)),
+        ),
+        "agent_id": str(snapshot.get("agent_id", "") or ""),
+        "agent_name": str(snapshot.get("agent_name", "") or ""),
+        "tool_count": int(snapshot.get("tool_count", 0) or 0),
+        "default_agent_id": str(snapshot.get("default_agent_id", "") or ""),
         "session_count": session_count,
         "model_provider": str(model_cfg.get("provider", "") or ""),
         "model_name": str(model_cfg.get("model_name", "") or ""),
-        "agents": runner.list_agents()
+        "agents": snapshot.get("agents")
+        if isinstance(snapshot.get("agents"), list)
+        else runner.list_agents()
         if hasattr(runner, "list_agents")
         else [],
         "usage": usage,
     }
 
 
+def _get_skills_runtime_stats() -> dict[str, Any]:
+    try:
+        from researchclaw.agents.skills_manager import SkillsManager
+
+        active_skills = SkillsManager().list_active_skills()
+    except Exception:
+        active_skills = []
+
+    return {
+        "active_count": len(active_skills),
+        "active_skills": active_skills,
+    }
+
+
+def _get_heartbeat_runtime_stats() -> dict[str, Any]:
+    enabled = bool(getattr(get_heartbeat_config(), "enabled", False))
+    hb_file = Path(WORKING_DIR) / "heartbeat.json"
+    if not hb_file.exists():
+        return _heartbeat_config_defaults(enabled=enabled, healthy=False)
+
+    try:
+        data = json.loads(hb_file.read_text(encoding="utf-8"))
+    except Exception:
+        return _heartbeat_config_defaults(enabled=enabled, healthy=False)
+
+    ts = float(data.get("timestamp", 0))
+    age = int(time.time() - ts) if ts else None
+    return _heartbeat_config_defaults(
+        enabled=enabled,
+        healthy=enabled and age is not None and age <= 2 * 3600,
+        last_heartbeat=ts,
+        age_seconds=age,
+    )
+
+
 def _get_channel_runtime_stats(channels: Any) -> dict[str, Any]:
     """Best-effort channel runtime stats."""
     if channels is None:
-        return {
-            "registered_channels": 0,
-            "queued_messages": 0,
-            "pending_messages": 0,
-            "in_progress_keys": 0,
-            "consumer_workers": {"total": 0, "alive": 0},
-            "channels": [],
-        }
+        return _empty_channel_stats()
     if hasattr(channels, "get_runtime_stats"):
         try:
             stats = channels.get_runtime_stats()
@@ -360,33 +461,23 @@ def _get_channel_runtime_stats(channels: Any) -> dict[str, Any]:
         listed = channels.list_channels()
     except Exception:
         listed = []
-    return {
-        "registered_channels": len(listed),
-        "queued_messages": 0,
-        "pending_messages": 0,
-        "in_progress_keys": 0,
-        "consumer_workers": {"total": 0, "alive": 0},
-        "channels": listed,
-    }
+    stats = _empty_channel_stats()
+    stats["registered_channels"] = len(listed)
+    stats["channels"] = listed
+    return stats
 
 
 async def _get_automation_stats(req: Request) -> dict[str, Any]:
     store = getattr(req.app.state, "automation_store", None)
     if store is None or not hasattr(store, "stats"):
-        return {
-            "total": 0,
-            "queued": 0,
-            "running": 0,
-            "succeeded": 0,
-            "failed": 0,
-        }
+        return _empty_automation_stats()
     try:
         stats = await store.stats()
         if isinstance(stats, dict):
             return stats
     except Exception:
         pass
-    return {"total": 0, "queued": 0, "running": 0, "succeeded": 0, "failed": 0}
+    return _empty_automation_stats()
 
 
 @router.get("/status")
@@ -403,6 +494,8 @@ async def runtime_status(req: Request):
     channel_stats = _get_channel_runtime_stats(channels)
     runner_stats = _get_runner_runtime_stats(runner)
     automation_stats = await _get_automation_stats(req)
+    skills_stats = _get_skills_runtime_stats()
+    heartbeat_stats = _get_heartbeat_runtime_stats()
 
     return {
         "service": "ResearchClaw",
@@ -417,6 +510,8 @@ async def runtime_status(req: Request):
             "channels": channel_stats,
             "cron": cron_stats,
             "automation": automation_stats,
+            "skills": skills_stats,
+            "heartbeat": heartbeat_stats,
         },
     }
 
@@ -447,30 +542,12 @@ async def usage_stats(req: Request, agent_id: str | None = None):
     """Model usage + fallback observability."""
     runner = getattr(req.app.state, "runner", None)
     if runner is None:
-        return {
-            "requests": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "fallbacks": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "providers": [],
-            "agents": [],
-        }
+        return _empty_usage_stats()
     if hasattr(runner, "list_usage_stats"):
         return runner.list_usage_stats(agent_id=agent_id)
     if hasattr(runner, "get_usage_stats"):
         return runner.get_usage_stats()
-    return {
-        "requests": 0,
-        "succeeded": 0,
-        "failed": 0,
-        "fallbacks": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "providers": [],
-        "agents": [],
-    }
+    return _empty_usage_stats()
 
 
 @router.get("/channels/catalog")
@@ -588,9 +665,7 @@ async def install_custom_channel(req: Request, payload: ChannelInstallRequest):
             encoding="utf-8",
         )
 
-    config = load_config()
-    if not isinstance(config, dict):
-        config = {}
+    config = _load_mutable_config()
     _save_and_update_channel_catalog(config, key=key, remove=False)
     save_config(config)
     await _refresh_runtime(req)
@@ -628,9 +703,7 @@ async def remove_custom_channel(req: Request, key: str):
     if dest_dir.exists():
         shutil.rmtree(dest_dir)
 
-    config = load_config()
-    if not isinstance(config, dict):
-        config = {}
+    config = _load_mutable_config()
     _save_and_update_channel_catalog(config, key=normalized, remove=True)
     extra = config.get("extra_channels")
     if isinstance(extra, dict):
@@ -646,9 +719,7 @@ async def remove_custom_channel(req: Request, key: str):
 @router.get("/channels/accounts")
 async def get_channel_accounts():
     """Get channel account mapping configuration."""
-    cfg = load_config()
-    if not isinstance(cfg, dict):
-        return {"channel_accounts": {}}
+    cfg = _load_mutable_config()
     accounts = cfg.get("channel_accounts")
     if not isinstance(accounts, dict):
         return {"channel_accounts": {}}
@@ -661,9 +732,7 @@ async def update_channel_accounts(
     payload: ChannelAccountsUpdateRequest,
 ):
     """Replace all channel account mappings."""
-    cfg = load_config()
-    if not isinstance(cfg, dict):
-        cfg = {}
+    cfg = _load_mutable_config()
     cfg["channel_accounts"] = payload.channel_accounts
     save_config(cfg)
     await _refresh_runtime(req)
@@ -926,23 +995,7 @@ async def disable_cron_job(job_name: str, req: Request):
 
 @router.get("/heartbeat")
 async def heartbeat_status():
-    hb_file = Path(WORKING_DIR) / "heartbeat.json"
-    if not hb_file.exists():
-        return {"enabled": True, "last_heartbeat": None, "healthy": False}
-
-    try:
-        data = json.loads(hb_file.read_text(encoding="utf-8"))
-    except Exception:
-        return {"enabled": True, "last_heartbeat": None, "healthy": False}
-
-    ts = float(data.get("timestamp", 0))
-    age = int(time.time() - ts) if ts else None
-    return {
-        "enabled": True,
-        "last_heartbeat": ts,
-        "age_seconds": age,
-        "healthy": age is not None and age <= 2 * 3600,
-    }
+    return _get_heartbeat_runtime_stats()
 
 
 @router.get("/automation/runs")

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import {
   Server,
@@ -63,6 +63,7 @@ type ProviderFormState = {
 };
 
 type EditForm = ProviderFormState;
+type FormMode = "add" | "edit";
 
 const PLATFORM_PRESETS: ProviderPreset[] = [
   {
@@ -255,6 +256,17 @@ function hasApiKeyRequirement(form: ProviderFormState): boolean {
   return form.provider_type !== "ollama";
 }
 
+function buildProviderSearchText(provider: ProviderItem): string {
+  return [
+    provider.name,
+    provider.provider_type,
+    provider.base_url || "",
+    ...normalizeModelNames(provider),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 export default function ModelsPage() {
   const { t } = useI18n();
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -326,19 +338,23 @@ export default function ModelsPage() {
     };
   }
 
-  function setAddField<K extends keyof ProviderFormState>(
+  function updateFormField<K extends keyof ProviderFormState>(
+    mode: FormMode,
     key: K,
     value: ProviderFormState[K],
   ) {
-    setAddForm((prev) => ({ ...prev, [key]: value }));
+    const setForm = mode === "add" ? setAddForm : setEditForm;
+    setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function setEditField<K extends keyof EditForm>(key: K, value: EditForm[K]) {
-    setEditForm((prev) => ({ ...prev, [key]: value }));
+  function applyPresetToForm(mode: FormMode, presetKey: string) {
+    const setForm = mode === "add" ? setAddForm : setEditForm;
+    setForm((prev) => updateFormPreset(prev, presetKey));
   }
 
-  function updateAddModel(index: number, value: string) {
-    setAddForm((prev) => ({
+  function updateFormModel(mode: FormMode, index: number, value: string) {
+    const setForm = mode === "add" ? setAddForm : setEditForm;
+    setForm((prev) => ({
       ...prev,
       model_names: prev.model_names.map((item, idx) =>
         idx === index ? value : item,
@@ -346,38 +362,17 @@ export default function ModelsPage() {
     }));
   }
 
-  function updateEditModel(index: number, value: string) {
-    setEditForm((prev) => ({
-      ...prev,
-      model_names: prev.model_names.map((item, idx) =>
-        idx === index ? value : item,
-      ),
-    }));
-  }
-
-  function addModelRow(mode: "add" | "edit") {
-    if (mode === "add") {
-      setAddForm((prev) => ({
-        ...prev,
-        model_names: [...prev.model_names, ""],
-      }));
-      return;
-    }
-    setEditForm((prev) => ({
+  function addModelRow(mode: FormMode) {
+    const setForm = mode === "add" ? setAddForm : setEditForm;
+    setForm((prev) => ({
       ...prev,
       model_names: [...prev.model_names, ""],
     }));
   }
 
-  function removeModelRow(mode: "add" | "edit", index: number) {
-    if (mode === "add") {
-      setAddForm((prev) => {
-        const next = prev.model_names.filter((_, idx) => idx !== index);
-        return { ...prev, model_names: next.length > 0 ? next : [""] };
-      });
-      return;
-    }
-    setEditForm((prev) => {
+  function removeModelRow(mode: FormMode, index: number) {
+    const setForm = mode === "add" ? setAddForm : setEditForm;
+    setForm((prev) => {
       const next = prev.model_names.filter((_, idx) => idx !== index);
       return { ...prev, model_names: next.length > 0 ? next : [""] };
     });
@@ -501,9 +496,8 @@ export default function ModelsPage() {
     }
   }
 
-  function renderModelEditor(form: ProviderFormState, mode: "add" | "edit") {
+  function renderModelEditor(form: ProviderFormState, mode: FormMode) {
     const options = buildModelOptions(form, availableModels);
-    const onModelChange = mode === "add" ? updateAddModel : updateEditModel;
     const datalistId = `model-options-${mode}-${form.preset_key}-${form.provider_type}`;
 
     return (
@@ -537,7 +531,7 @@ export default function ModelsPage() {
                 }
                 value={modelName}
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  onModelChange(index, e.target.value)
+                  updateFormModel(mode, index, e.target.value)
                 }
               />
               <button
@@ -576,9 +570,8 @@ export default function ModelsPage() {
     );
   }
 
-  function renderProviderForm(form: ProviderFormState, mode: "add" | "edit") {
+  function renderProviderForm(form: ProviderFormState, mode: FormMode) {
     const preset = PRESET_BY_KEY[form.preset_key] ?? PRESET_BY_KEY.custom;
-    const setField = mode === "add" ? setAddField : setEditField;
 
     return (
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -587,9 +580,7 @@ export default function ModelsPage() {
           <select
             value={form.preset_key}
             onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-              mode === "add"
-                ? setAddForm((prev) => updateFormPreset(prev, e.target.value))
-                : setEditForm((prev) => updateFormPreset(prev, e.target.value))
+              applyPresetToForm(mode, e.target.value)
             }
           >
             {PLATFORM_PRESETS.map((item) => (
@@ -614,7 +605,7 @@ export default function ModelsPage() {
             placeholder="例如：lab-gateway"
             value={form.name}
             onChange={(e: ChangeEvent<HTMLInputElement>) =>
-              setField("name", e.target.value)
+              updateFormField(mode, "name", e.target.value)
             }
           />
         </div>
@@ -625,7 +616,7 @@ export default function ModelsPage() {
             <select
               value={form.provider_type}
               onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                setField("provider_type", e.target.value)
+                updateFormField(mode, "provider_type", e.target.value)
               }
             >
               {PROVIDER_TYPES.map((item) => (
@@ -655,7 +646,7 @@ export default function ModelsPage() {
             }
             value={form.api_key}
             onChange={(e: ChangeEvent<HTMLInputElement>) =>
-              setField("api_key", e.target.value)
+              updateFormField(mode, "api_key", e.target.value)
             }
           />
         </div>
@@ -672,7 +663,7 @@ export default function ModelsPage() {
             placeholder="留空使用平台默认值"
             value={form.base_url}
             onChange={(e: ChangeEvent<HTMLInputElement>) =>
-              setField("base_url", e.target.value)
+              updateFormField(mode, "base_url", e.target.value)
             }
           />
         </div>
@@ -682,17 +673,26 @@ export default function ModelsPage() {
     );
   }
 
-  const filteredProviders = providers.filter((provider) => {
-    const haystack = [
-      provider.name,
-      provider.provider_type,
-      provider.base_url || "",
-      ...normalizeModelNames(provider),
-    ]
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(query.trim().toLowerCase());
-  });
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredProviders = useMemo(
+    () =>
+      providers.filter((provider) =>
+        buildProviderSearchText(provider).includes(normalizedQuery),
+      ),
+    [providers, normalizedQuery],
+  );
+  const enabledProviderCount = useMemo(
+    () => providers.filter((provider) => provider.enabled).length,
+    [providers],
+  );
+  const availableModelCount = useMemo(
+    () =>
+      Object.values(availableModels).reduce(
+        (total, items) => total + items.length,
+        0,
+      ),
+    [availableModels],
+  );
 
   return (
     <div className="panel">
@@ -703,17 +703,8 @@ export default function ModelsPage() {
         meta={
           <div className="page-header-meta-row">
             <MetricPill label="供应商" value={providers.length} />
-            <MetricPill
-              label="已启用"
-              value={providers.filter((provider) => provider.enabled).length}
-            />
-            <MetricPill
-              label="可发现模型"
-              value={Object.values(availableModels).reduce(
-                (total, items) => total + items.length,
-                0,
-              )}
-            />
+            <MetricPill label="已启用" value={enabledProviderCount} />
+            <MetricPill label="可发现模型" value={availableModelCount} />
           </div>
         }
         actions={

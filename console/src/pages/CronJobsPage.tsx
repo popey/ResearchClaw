@@ -51,6 +51,11 @@ type CronJobForm = {
   misfire_grace_seconds: number;
 };
 
+type NoticeState = {
+  variant: "success" | "danger" | "warning" | "info";
+  text: string;
+};
+
 function emptyForm(): CronJobForm {
   return {
     name: "",
@@ -181,6 +186,27 @@ function toPayload(
   return payload;
 }
 
+function jobMatchesFilters(
+  job: CronJobItem,
+  queryText: string,
+  statusFilter: "all" | "enabled" | "paused",
+): boolean {
+  if (statusFilter === "enabled" && !job.enabled) return false;
+  if (statusFilter === "paused" && job.enabled) return false;
+  if (!queryText) return true;
+  return [
+    job.name,
+    job.cron,
+    job.channel || "",
+    job.target_user_id || "",
+    job.target_session_id || "",
+    job.task_type,
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(queryText);
+}
+
 export default function CronJobsPage() {
   const { t } = useI18n();
   const [jobs, setJobs] = useState<CronJobItem[]>([]);
@@ -196,10 +222,7 @@ export default function CronJobsPage() {
   const [statusFilter, setStatusFilter] = useState<
     "all" | "enabled" | "paused"
   >("all");
-  const [notice, setNotice] = useState<{
-    variant: "success" | "danger" | "warning" | "info";
-    text: string;
-  } | null>(null);
+  const [notice, setNotice] = useState<NoticeState | null>(null);
 
   const channelOptions = useMemo(() => {
     const names = new Set<string>(["console", ...channels]);
@@ -326,23 +349,15 @@ export default function CronJobsPage() {
     }
   }
 
-  const filteredJobs = jobs.filter((job) => {
-    const queryText = query.trim().toLowerCase();
-    if (statusFilter === "enabled" && !job.enabled) return false;
-    if (statusFilter === "paused" && job.enabled) return false;
-    if (!queryText) return true;
-    return [
-      job.name,
-      job.cron,
-      job.channel || "",
-      job.target_user_id || "",
-      job.target_session_id || "",
-      job.task_type,
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(queryText);
-  });
+  const queryText = query.trim().toLowerCase();
+  const filteredJobs = useMemo(
+    () => jobs.filter((job) => jobMatchesFilters(job, queryText, statusFilter)),
+    [jobs, queryText, statusFilter],
+  );
+  const enabledJobCount = useMemo(
+    () => jobs.filter((job) => job.enabled).length,
+    [jobs],
+  );
 
   return (
     <div className="panel">
@@ -353,10 +368,7 @@ export default function CronJobsPage() {
         meta={
           <div className="page-header-meta-row">
             <MetricPill label="任务数" value={jobs.length} />
-            <MetricPill
-              label="启用中"
-              value={jobs.filter((job) => job.enabled).length}
-            />
+            <MetricPill label="启用中" value={enabledJobCount} />
             <MetricPill label="可用通道" value={channelOptions.length} />
           </div>
         }

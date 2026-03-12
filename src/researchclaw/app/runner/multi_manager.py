@@ -120,12 +120,62 @@ class MultiAgentRunnerManager:
         self._lock = asyncio.Lock()
         self._last_routed_agent_id = "main"
 
+    def _apply_manager_dependencies(self, manager: AgentRunnerManager) -> None:
+        if self._chat_manager is not None:
+            manager.set_chat_manager(self._chat_manager)
+        if self._mcp_manager is not None:
+            manager.set_mcp_manager(self._mcp_manager)
+
+    def _create_manager(self, definition: AgentDefinition) -> AgentRunnerManager:
+        manager = AgentRunnerManager(
+            working_dir=definition.workspace,
+            model_config=definition.model_config,
+            agent_id=definition.id,
+        )
+        self._apply_manager_dependencies(manager)
+        return manager
+
+    @staticmethod
+    def _stamp_request_agent_id(target: Any, agent_id: str) -> None:
+        if isinstance(target, dict):
+            target["agent_id"] = agent_id
+            target.setdefault("channel_meta", {})
+            if isinstance(target["channel_meta"], dict):
+                target["channel_meta"]["agent_id"] = agent_id
+            return
+
+        try:
+            setattr(target, "agent_id", agent_id)
+        except Exception:
+            pass
+
+        meta_obj = _get_field(target, "channel_meta", None)
+        if meta_obj is None:
+            try:
+                setattr(target, "channel_meta", {"agent_id": agent_id})
+            except Exception:
+                pass
+        elif isinstance(meta_obj, dict):
+            meta_obj["agent_id"] = agent_id
+
+    @staticmethod
+    def _stamp_event_agent_id(target: Any, agent_id: str) -> None:
+        if isinstance(target, dict):
+            target.setdefault("agent_id", agent_id)
+            return
+        try:
+            setattr(target, "agent_id", agent_id)
+        except Exception:
+            pass
+
     # ---- compatibility facade for existing code paths ----
 
     @property
     def is_running(self) -> bool:
-        manager = self._agents.get(self.default_agent_id)
-        return bool(manager and manager.is_running)
+        return any(
+            bool(manager and manager.is_running)
+            for manager in self._agents.values()
+        )
 
     @property
     def runner(self) -> Any:
@@ -141,6 +191,60 @@ class MultiAgentRunnerManager:
     def session_manager(self) -> Any:
         manager = self._agents.get(self.default_agent_id)
         return manager.session_manager if manager is not None else None
+
+    def get_status_manager(
+        self,
+        agent_id: str | None = None,
+    ) -> tuple[str, AgentRunnerManager] | tuple[None, None]:
+        preferred = _normalize_id(agent_id or "", "")
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def _push(value: str) -> None:
+            normalized = _normalize_id(value, "")
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                candidates.append(normalized)
+
+        _push(preferred)
+        _push(self.default_agent_id)
+        _push(self._last_routed_agent_id)
+        for aid in sorted(self._agents):
+            _push(aid)
+
+        for aid in candidates:
+            manager = self._agents.get(aid)
+            if manager is not None and manager.is_running:
+                return aid, manager
+
+        for aid in candidates:
+            manager = self._agents.get(aid)
+            if manager is not None:
+                return aid, manager
+
+        return None, None
+
+    def get_status_snapshot(
+        self,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        selected_id, manager = self.get_status_manager(agent_id=agent_id)
+        agents = self.list_agents()
+        running = any(bool(item.get("running")) for item in agents)
+        tool_names = []
+        if manager is not None and getattr(manager, "agent", None) is not None:
+            tool_names = list(getattr(manager.agent, "tool_names", []) or [])
+
+        return {
+            "running": running,
+            "agent_id": selected_id or self.default_agent_id or "main",
+            "agent_name": selected_id or self.default_agent_id or "main",
+            "tool_count": len(tool_names),
+            "tool_names": tool_names,
+            "agents": agents,
+            "default_agent_id": self.default_agent_id,
+            "last_routed_agent_id": self._last_routed_agent_id,
+        }
 
     # ---- lifecycle ----
 
@@ -194,30 +298,12 @@ class MultiAgentRunnerManager:
             for agent_id, definition in definitions.items():
                 existing = self._agents.get(agent_id)
                 if existing is None:
-                    manager = AgentRunnerManager(
-                        working_dir=definition.workspace,
-                        model_config=definition.model_config,
-                        agent_id=agent_id,
-                    )
-                    if self._chat_manager is not None:
-                        manager.set_chat_manager(self._chat_manager)
-                    if self._mcp_manager is not None:
-                        manager.set_mcp_manager(self._mcp_manager)
-                    self._agents[agent_id] = manager
+                    self._agents[agent_id] = self._create_manager(definition)
                     continue
 
                 if Path(existing.working_dir) != Path(definition.workspace):
                     await existing.stop()
-                    manager = AgentRunnerManager(
-                        working_dir=definition.workspace,
-                        model_config=definition.model_config,
-                        agent_id=agent_id,
-                    )
-                    if self._chat_manager is not None:
-                        manager.set_chat_manager(self._chat_manager)
-                    if self._mcp_manager is not None:
-                        manager.set_mcp_manager(self._mcp_manager)
-                    self._agents[agent_id] = manager
+                    self._agents[agent_id] = self._create_manager(definition)
                 else:
                     existing._model_config = dict(
                         definition.model_config,
@@ -273,33 +359,10 @@ class MultiAgentRunnerManager:
         self._last_routed_agent_id = agent_id
 
         # Stamp resolved agent id for observability.
-        if isinstance(request, dict):
-            request["agent_id"] = agent_id
-            request.setdefault("channel_meta", {})
-            if isinstance(request["channel_meta"], dict):
-                request["channel_meta"]["agent_id"] = agent_id
-        else:
-            try:
-                setattr(request, "agent_id", agent_id)
-            except Exception:
-                pass
-            meta_obj = _get_field(request, "channel_meta", None)
-            if meta_obj is None:
-                try:
-                    setattr(request, "channel_meta", {"agent_id": agent_id})
-                except Exception:
-                    pass
-            elif isinstance(meta_obj, dict):
-                meta_obj["agent_id"] = agent_id
+        self._stamp_request_agent_id(request, agent_id)
 
         async for event in manager.stream_query(request):
-            if isinstance(event, dict):
-                event.setdefault("agent_id", agent_id)
-            else:
-                try:
-                    setattr(event, "agent_id", agent_id)
-                except Exception:
-                    pass
+            self._stamp_event_agent_id(event, agent_id)
             yield event
 
     async def apply_provider(
@@ -320,6 +383,7 @@ class MultiAgentRunnerManager:
             running = bool(manager and manager.is_running)
             session_count = 0
             usage: dict[str, Any] = {}
+            tool_count = 0
             if manager is not None:
                 try:
                     session_count = len(
@@ -327,6 +391,13 @@ class MultiAgentRunnerManager:
                     )
                 except Exception:
                     session_count = 0
+                try:
+                    tool_count = len(
+                        getattr(getattr(manager, "agent", None), "tool_names", [])
+                        or [],
+                    )
+                except Exception:
+                    tool_count = 0
                 if hasattr(manager, "get_usage_stats"):
                     try:
                         usage = manager.get_usage_stats()
@@ -339,6 +410,7 @@ class MultiAgentRunnerManager:
                     "workspace": definition.workspace,
                     "running": running,
                     "session_count": session_count,
+                    "tool_count": tool_count,
                     "default": agent_id == self.default_agent_id,
                     "usage": usage,
                 },

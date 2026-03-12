@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plug, Radio, RefreshCw, Save, Trash2 } from "lucide-react";
 import {
   getBindings,
@@ -22,6 +22,15 @@ import {
 } from "../components/ui";
 import { ChannelGlyph, IconBadge } from "../components/icons";
 
+type NoticeState = {
+  variant: "success" | "danger" | "warning" | "info";
+  text: string;
+};
+
+function includesQuery(value: string, query: string): boolean {
+  return value.toLowerCase().includes(query);
+}
+
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [catalog, setCatalog] = useState<any[]>([]);
@@ -34,10 +43,7 @@ export default function ChannelsPage() {
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState<{
-    variant: "success" | "danger" | "warning" | "info";
-    text: string;
-  } | null>(null);
+  const [notice, setNotice] = useState<NoticeState | null>(null);
 
   async function onLoad() {
     const [rows, cat, custom, accounts, bindings] = await Promise.all([
@@ -101,19 +107,50 @@ export default function ChannelsPage() {
     void onLoad();
   }, []);
 
+  async function onRemoveCustomChannel(key: string) {
+    if (!window.confirm(`确认删除插件 ${key} 吗？`)) return;
+    try {
+      await removeCustomChannel(key);
+      setNotice({
+        variant: "success",
+        text: `已删除插件 ${key}`,
+      });
+      await onLoad();
+    } catch (error: any) {
+      setNotice({
+        variant: "danger",
+        text: error?.message || "删除自定义频道失败",
+      });
+    }
+  }
+
   const queryText = query.trim().toLowerCase();
-  const filteredChannels = channels.filter((item) =>
-    `${item.name} ${item.type}`.toLowerCase().includes(queryText),
+  const filteredChannels = useMemo(
+    () =>
+      channels.filter((item) =>
+        includesQuery(`${item.name} ${item.type}`, queryText),
+      ),
+    [channels, queryText],
   );
-  const filteredCatalog = catalog.filter((item) =>
-    `${String(item.key)} ${item.builtin ? "builtin" : "custom"}`
-      .toLowerCase()
-      .includes(queryText),
+  const filteredCatalog = useMemo(
+    () =>
+      catalog.filter((item) =>
+        includesQuery(
+          `${String(item.key)} ${item.builtin ? "builtin" : "custom"}`,
+          queryText,
+        ),
+      ),
+    [catalog, queryText],
   );
-  const filteredCustom = customChannels.filter((item) =>
-    `${String(item.key)} ${String(item.path || "")}`
-      .toLowerCase()
-      .includes(queryText),
+  const filteredCustom = useMemo(
+    () =>
+      customChannels.filter((item) =>
+        includesQuery(
+          `${String(item.key)} ${String(item.path || "")}`,
+          queryText,
+        ),
+      ),
+    [customChannels, queryText],
   );
 
   return (
@@ -269,26 +306,7 @@ export default function ChannelsPage() {
                 <div className="data-row-actions">
                   <button
                     className="btn-secondary btn-sm"
-                    onClick={async () => {
-                      if (
-                        !window.confirm(`确认删除插件 ${String(item.key)} 吗？`)
-                      ) {
-                        return;
-                      }
-                      try {
-                        await removeCustomChannel(String(item.key));
-                        setNotice({
-                          variant: "success",
-                          text: `已删除插件 ${String(item.key)}`,
-                        });
-                        await onLoad();
-                      } catch (error: any) {
-                        setNotice({
-                          variant: "danger",
-                          text: error?.message || "删除自定义频道失败",
-                        });
-                      }
-                    }}
+                    onClick={() => void onRemoveCustomChannel(String(item.key))}
                   >
                     <Trash2 size={14} />
                     删除

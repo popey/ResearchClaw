@@ -1,7 +1,6 @@
 import type {
   AgentRunningConfig,
   ChannelItem,
-  ChatMessage,
   CronJobItem,
   EnvItem,
   McpClientItem,
@@ -15,36 +14,93 @@ import type {
   WorkspaceFileItem,
 } from "./types";
 
-export async function getHealth(): Promise<{ status: string }> {
-  const res = await fetch("/api/health");
-  if (!res.ok) throw new Error("Health check failed");
+type JsonInit = Omit<RequestInit, "body"> & { body?: unknown };
+
+async function requestJson<T>(
+  path: string,
+  errorMessage: string,
+  init?: JsonInit,
+): Promise<T> {
+  const { body, headers, ...rest } = init ?? {};
+  const res = await fetch(path, {
+    ...rest,
+    headers:
+      body === undefined
+        ? headers
+        : {
+            "Content-Type": "application/json",
+            ...(headers ?? {}),
+          },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(errorMessage);
   return res.json();
+}
+
+async function requestVoid(
+  path: string,
+  errorMessage: string,
+  init?: JsonInit,
+): Promise<void> {
+  const { body, headers, ...rest } = init ?? {};
+  const res = await fetch(path, {
+    ...rest,
+    headers:
+      body === undefined
+        ? headers
+        : {
+            "Content-Type": "application/json",
+            ...(headers ?? {}),
+          },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(errorMessage);
+}
+
+function withQuery(
+  path: string,
+  params: Record<string, string | number | boolean | undefined>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+export async function getHealth(): Promise<{ status: string }> {
+  return requestJson("/api/health", "Health check failed");
 }
 
 export async function sendChat(
   message: string,
   sessionId?: string,
+  agentId?: string,
 ): Promise<{ response: string; session_id: string }> {
-  const res = await fetch("/api/agent/chat", {
+  return requestJson("/api/agent/chat", "Chat request failed", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: {
+      message,
+      session_id: sessionId,
+      agent_id: agentId,
+    },
   });
-  if (!res.ok) throw new Error("Chat request failed");
-  return res.json();
 }
 
 export async function searchArxiv(
   query: string,
   maxResults = 8,
 ): Promise<PaperItem[]> {
-  const res = await fetch("/api/papers/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, source: "arxiv", max_results: maxResults }),
-  });
-  if (!res.ok) throw new Error("Paper search failed");
-  const data = await res.json();
+  const data = await requestJson<{ results?: PaperItem[] }>(
+    "/api/papers/search",
+    "Paper search failed",
+    {
+      method: "POST",
+      body: { query, source: "arxiv", max_results: maxResults },
+    },
+  );
   if (Array.isArray(data.results)) return data.results;
   return [];
 }
@@ -54,22 +110,18 @@ export async function getStatus(): Promise<{
   agent_name: string;
   tool_count: number;
 }> {
-  const res = await fetch("/api/agent/status");
-  if (!res.ok) throw new Error("Status request failed");
-  return res.json();
+  return requestJson("/api/agent/status", "Status request failed");
 }
 
 export async function getControlStatus(): Promise<any> {
-  const res = await fetch("/api/control/status");
-  if (!res.ok) throw new Error("Control status request failed");
-  return res.json();
+  return requestJson("/api/control/status", "Control status request failed");
 }
 
 export async function getControlUsage(agentId?: string): Promise<any> {
-  const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-  const res = await fetch(`/api/control/usage${query}`);
-  if (!res.ok) throw new Error("Control usage request failed");
-  return res.json();
+  return requestJson(
+    withQuery("/api/control/usage", { agent_id: agentId }),
+    "Control usage request failed",
+  );
 }
 
 export async function getControlLogs(lines = 200): Promise<{
@@ -77,30 +129,26 @@ export async function getControlLogs(lines = 200): Promise<{
   lines: number;
   content: string;
 }> {
-  const res = await fetch(
-    `/api/control/logs?lines=${encodeURIComponent(String(lines))}`,
+  return requestJson(
+    withQuery("/api/control/logs", { lines }),
+    "Control logs request failed",
   );
-  if (!res.ok) throw new Error("Control logs request failed");
-  return res.json();
 }
 
 export async function reloadControlRuntime(): Promise<any> {
-  const res = await fetch("/api/control/reload", { method: "POST" });
-  if (!res.ok) throw new Error("Control reload failed");
-  return res.json();
+  return requestJson("/api/control/reload", "Control reload failed", {
+    method: "POST",
+  });
 }
 
 export async function applyControlConfig(
   patch: Record<string, unknown>,
   replace = false,
 ): Promise<any> {
-  const res = await fetch("/api/control/config/apply", {
+  return requestJson("/api/control/config/apply", "Apply config failed", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ patch, replace }),
+    body: { patch, replace },
   });
-  if (!res.ok) throw new Error("Apply config failed");
-  return res.json();
 }
 
 function normalizeCronJob(job: any): CronJobItem {
@@ -192,21 +240,23 @@ function toCronJobPayload(job: CronJobItem): Record<string, unknown> {
 }
 
 export async function getCronJobs(): Promise<CronJobItem[]> {
-  const res = await fetch("/api/crons/cron/jobs");
-  if (!res.ok) throw new Error("Cron jobs request failed");
-  const data = await res.json();
+  const data = await requestJson<any[]>(
+    "/api/crons/cron/jobs",
+    "Cron jobs request failed",
+  );
   if (!Array.isArray(data)) return [];
   return data.map((job: any) => normalizeCronJob(job));
 }
 
 export async function createCronJob(job: CronJobItem): Promise<CronJobItem> {
-  const res = await fetch("/api/crons/cron/jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toCronJobPayload(job)),
-  });
-  if (!res.ok) throw new Error("Create cron job failed");
-  const data = await res.json();
+  const data = await requestJson<any>(
+    "/api/crons/cron/jobs",
+    "Create cron job failed",
+    {
+      method: "POST",
+      body: toCronJobPayload(job),
+    },
+  );
   return normalizeCronJob(data);
 }
 
@@ -214,39 +264,41 @@ export async function replaceCronJob(
   jobId: string,
   job: CronJobItem,
 ): Promise<CronJobItem> {
-  const res = await fetch(`/api/crons/cron/jobs/${encodeURIComponent(jobId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(toCronJobPayload(job)),
-  });
-  if (!res.ok) throw new Error("Update cron job failed");
-  const data = await res.json();
+  const data = await requestJson<any>(
+    `/api/crons/cron/jobs/${encodeURIComponent(jobId)}`,
+    "Update cron job failed",
+    {
+      method: "PUT",
+      body: toCronJobPayload(job),
+    },
+  );
   return normalizeCronJob(data);
 }
 
 export async function deleteCronJob(jobId: string): Promise<void> {
-  const res = await fetch(`/api/crons/cron/jobs/${encodeURIComponent(jobId)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error("Delete cron job failed");
+  await requestVoid(
+    `/api/crons/cron/jobs/${encodeURIComponent(jobId)}`,
+    "Delete cron job failed",
+    { method: "DELETE" },
+  );
 }
 
 export async function getChannels(): Promise<ChannelItem[]> {
-  const res = await fetch("/api/control/channels");
-  if (!res.ok) throw new Error("Channels request failed");
-  return res.json();
+  return requestJson("/api/control/channels", "Channels request failed");
 }
 
 export async function getChannelCatalog(): Promise<any> {
-  const res = await fetch("/api/control/channels/catalog");
-  if (!res.ok) throw new Error("Channel catalog request failed");
-  return res.json();
+  return requestJson(
+    "/api/control/channels/catalog",
+    "Channel catalog request failed",
+  );
 }
 
 export async function listCustomChannels(): Promise<any[]> {
-  const res = await fetch("/api/control/channels/custom");
-  if (!res.ok) throw new Error("List custom channels failed");
-  const data = await res.json();
+  const data = await requestJson<{ channels?: any[] }>(
+    "/api/control/channels/custom",
+    "List custom channels failed",
+  );
   return Array.isArray(data?.channels) ? data.channels : [];
 }
 
@@ -256,107 +308,101 @@ export async function installCustomChannel(payload: {
   url?: string;
   overwrite?: boolean;
 }): Promise<any> {
-  const res = await fetch("/api/control/channels/custom/install", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error("Install custom channel failed");
-  return res.json();
+  return requestJson(
+    "/api/control/channels/custom/install",
+    "Install custom channel failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
 }
 
 export async function removeCustomChannel(key: string): Promise<any> {
-  const res = await fetch(
+  return requestJson(
     `/api/control/channels/custom/${encodeURIComponent(key)}`,
+    "Remove custom channel failed",
     { method: "DELETE" },
   );
-  if (!res.ok) throw new Error("Remove custom channel failed");
-  return res.json();
 }
 
 export async function getChannelAccounts(): Promise<
   Record<string, Record<string, Record<string, unknown>>>
 > {
-  const res = await fetch("/api/control/channels/accounts");
-  if (!res.ok) throw new Error("Get channel accounts failed");
-  const data = await res.json();
+  const data = await requestJson<{
+    channel_accounts?: Record<string, Record<string, Record<string, unknown>>>;
+  }>("/api/control/channels/accounts", "Get channel accounts failed");
   return data?.channel_accounts || {};
 }
 
 export async function updateChannelAccounts(
   channelAccounts: Record<string, Record<string, Record<string, unknown>>>,
 ): Promise<any> {
-  const res = await fetch("/api/control/channels/accounts", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel_accounts: channelAccounts }),
-  });
-  if (!res.ok) throw new Error("Update channel accounts failed");
-  return res.json();
+  return requestJson(
+    "/api/control/channels/accounts",
+    "Update channel accounts failed",
+    {
+      method: "PUT",
+      body: { channel_accounts: channelAccounts },
+    },
+  );
 }
 
 export async function getBindings(): Promise<any[]> {
-  const res = await fetch("/api/control/bindings");
-  if (!res.ok) throw new Error("Get bindings failed");
-  const data = await res.json();
+  const data = await requestJson<{ bindings?: any[] }>(
+    "/api/control/bindings",
+    "Get bindings failed",
+  );
   return Array.isArray(data?.bindings) ? data.bindings : [];
 }
 
 export async function updateBindings(bindings: any[]): Promise<any> {
-  const res = await fetch("/api/control/bindings", {
+  return requestJson("/api/control/bindings", "Update bindings failed", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bindings }),
+    body: { bindings },
   });
-  if (!res.ok) throw new Error("Update bindings failed");
-  return res.json();
 }
 
 export async function getSessions(): Promise<SessionItem[]> {
-  const res = await fetch("/api/control/sessions");
-  if (!res.ok) throw new Error("Sessions request failed");
-  return res.json();
+  return requestJson("/api/control/sessions", "Sessions request failed");
 }
 
 export async function getSessionsByAgent(
   agentId?: string,
 ): Promise<SessionItem[]> {
-  const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-  const res = await fetch(`/api/control/sessions${query}`);
-  if (!res.ok) throw new Error("Sessions request failed");
-  return res.json();
+  return requestJson(
+    withQuery("/api/control/sessions", { agent_id: agentId }),
+    "Sessions request failed",
+  );
 }
 
 export async function getSessionDetail(
   sessionId: string,
   agentId?: string,
 ): Promise<any> {
-  const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-  const res = await fetch(
-    `/api/control/sessions/${encodeURIComponent(sessionId)}${query}`,
+  return requestJson(
+    withQuery(`/api/control/sessions/${encodeURIComponent(sessionId)}`, {
+      agent_id: agentId,
+    }),
+    "Session detail request failed",
   );
-  if (!res.ok) throw new Error("Session detail request failed");
-  return res.json();
 }
 
 export async function deleteSession(
   sessionId: string,
   agentId?: string,
 ): Promise<void> {
-  const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-  const res = await fetch(
-    `/api/control/sessions/${encodeURIComponent(sessionId)}${query}`,
-    {
-      method: "DELETE",
-    },
+  await requestVoid(
+    withQuery(`/api/control/sessions/${encodeURIComponent(sessionId)}`, {
+      agent_id: agentId,
+    }),
+    "Delete session failed",
+    { method: "DELETE" },
   );
-  if (!res.ok) throw new Error("Delete session failed");
 }
 
 export async function getAgents(): Promise<any[]> {
-  const res = await fetch("/api/control/agents");
-  if (!res.ok) throw new Error("Agents request failed");
-  return res.json();
+  return requestJson("/api/control/agents", "Agents request failed");
 }
 
 export async function toggleCronJob(
@@ -364,34 +410,28 @@ export async function toggleCronJob(
   enabled: boolean,
 ): Promise<void> {
   const action = enabled ? "resume" : "pause";
-  const res = await fetch(
+  await requestVoid(
     `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/${action}`,
-    {
-      method: "POST",
-    },
+    "Toggle cron job failed",
+    { method: "POST" },
   );
-  if (!res.ok) throw new Error("Toggle cron job failed");
 }
 
 export async function runCronJobNow(jobId: string): Promise<void> {
-  const res = await fetch(
+  await requestVoid(
     `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/run`,
-    {
-      method: "POST",
-    },
+    "Run cron job failed",
+    { method: "POST" },
   );
-  if (!res.ok) throw new Error("Run cron job failed");
 }
 
 export async function getConsolePushMessages(
   sessionId?: string,
 ): Promise<PushMessage[]> {
-  const path = sessionId
-    ? `/api/console/push-messages?session_id=${encodeURIComponent(sessionId)}`
-    : "/api/console/push-messages";
-  const res = await fetch(path);
-  if (!res.ok) throw new Error("Get console push messages failed");
-  const data = await res.json();
+  const data = await requestJson<{ messages?: any[] }>(
+    withQuery("/api/console/push-messages", { session_id: sessionId }),
+    "Get console push messages failed",
+  );
   if (!Array.isArray(data?.messages)) return [];
   return data.messages
     .map((item: any) => ({
@@ -402,74 +442,72 @@ export async function getConsolePushMessages(
 }
 
 export async function getHeartbeat(): Promise<any> {
-  const res = await fetch("/api/control/heartbeat");
-  if (!res.ok) throw new Error("Heartbeat request failed");
-  return res.json();
+  return requestJson("/api/control/heartbeat", "Heartbeat request failed");
 }
 
 export async function listEnvVars(): Promise<EnvItem[]> {
-  const res = await fetch("/api/envs");
-  if (!res.ok) throw new Error("List envs failed");
-  return res.json();
+  return requestJson("/api/envs", "List envs failed");
 }
 
 export async function saveEnvVars(vars: Record<string, string>): Promise<void> {
-  const res = await fetch("/api/envs", {
+  await requestVoid("/api/envs", "Save envs failed", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(vars),
+    body: vars,
   });
-  if (!res.ok) throw new Error("Save envs failed");
 }
 
 export async function listMcpClients(): Promise<McpClientItem[]> {
-  const res = await fetch("/api/mcp");
-  if (!res.ok) throw new Error("List MCP clients failed");
-  return res.json();
+  return requestJson("/api/mcp", "List MCP clients failed");
 }
 
 export async function createMcpClient(
   key: string,
   body: Omit<McpClientItem, "key">,
 ): Promise<void> {
-  const res = await fetch(`/api/mcp?client_key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error("Create MCP client failed");
+  await requestVoid(
+    withQuery("/api/mcp", { client_key: key }),
+    "Create MCP client failed",
+    {
+      method: "POST",
+      body,
+    },
+  );
 }
 
 export async function updateMcpClient(
   key: string,
   body: Omit<McpClientItem, "key">,
 ): Promise<void> {
-  const res = await fetch(`/api/mcp/${encodeURIComponent(key)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error("Update MCP client failed");
+  await requestVoid(
+    `/api/mcp/${encodeURIComponent(key)}`,
+    "Update MCP client failed",
+    {
+      method: "PUT",
+      body,
+    },
+  );
 }
 
 export async function toggleMcpClient(key: string): Promise<void> {
-  const res = await fetch(`/api/mcp/${encodeURIComponent(key)}/toggle`, {
-    method: "PATCH",
-  });
-  if (!res.ok) throw new Error("Toggle MCP client failed");
+  await requestVoid(
+    `/api/mcp/${encodeURIComponent(key)}/toggle`,
+    "Toggle MCP client failed",
+    { method: "PATCH" },
+  );
 }
 
 export async function deleteMcpClient(key: string): Promise<void> {
-  const res = await fetch(`/api/mcp/${encodeURIComponent(key)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error("Delete MCP client failed");
+  await requestVoid(
+    `/api/mcp/${encodeURIComponent(key)}`,
+    "Delete MCP client failed",
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 export async function getWorkspaceInfo(): Promise<any> {
-  const res = await fetch("/api/workspace");
-  if (!res.ok) throw new Error("Workspace info failed");
-  return res.json();
+  return requestJson("/api/workspace", "Workspace info failed");
 }
 
 export async function getWorkspaceProfile(): Promise<{
@@ -477,125 +515,117 @@ export async function getWorkspaceProfile(): Promise<{
   content: string;
   path?: string;
 }> {
-  const res = await fetch("/api/workspace/profile");
-  if (!res.ok) throw new Error("Workspace profile failed");
-  return res.json();
+  return requestJson("/api/workspace/profile", "Workspace profile failed");
 }
 
 export async function listWorkspaceFiles(): Promise<WorkspaceFileItem[]> {
-  const res = await fetch("/api/workspace/files");
-  if (!res.ok) throw new Error("Workspace files request failed");
-  const data = await res.json();
+  const data = await requestJson<{ files?: WorkspaceFileItem[] }>(
+    "/api/workspace/files",
+    "Workspace files request failed",
+  );
   return Array.isArray(data?.files) ? data.files : [];
 }
 
 export async function getWorkspaceRelations(): Promise<any> {
-  const res = await fetch("/api/workspace/relations");
-  if (!res.ok) throw new Error("Workspace relations request failed");
-  return res.json();
+  return requestJson(
+    "/api/workspace/relations",
+    "Workspace relations request failed",
+  );
 }
 
 export async function getWorkspaceFileContent(
   path: string,
 ): Promise<WorkspaceFileContent> {
-  const res = await fetch(
-    `/api/workspace/file?path=${encodeURIComponent(path)}`,
+  return requestJson(
+    withQuery("/api/workspace/file", { path }),
+    "Workspace file read failed",
   );
-  if (!res.ok) throw new Error("Workspace file read failed");
-  return res.json();
 }
 
 export async function saveWorkspaceFileContent(
   path: string,
   content: string,
 ): Promise<void> {
-  const res = await fetch("/api/workspace/file", {
+  await requestVoid("/api/workspace/file", "Workspace file save failed", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, content }),
+    body: { path, content },
   });
-  if (!res.ok) throw new Error("Workspace file save failed");
 }
 
 export async function listSkills(): Promise<SkillItem[]> {
-  const res = await fetch("/api/skills");
-  if (!res.ok) throw new Error("List skills failed");
-  const data = await res.json();
+  const data = await requestJson<{ skills?: SkillItem[] }>(
+    "/api/skills",
+    "List skills failed",
+  );
   return Array.isArray(data.skills) ? data.skills : [];
 }
 
 export async function listActiveSkills(): Promise<string[]> {
-  const res = await fetch("/api/skills/active");
-  if (!res.ok) throw new Error("List active skills failed");
-  const data = await res.json();
+  const data = await requestJson<{ active_skills?: string[] }>(
+    "/api/skills/active",
+    "List active skills failed",
+  );
   return Array.isArray(data.active_skills) ? data.active_skills : [];
 }
 
 export async function enableSkill(skillName: string): Promise<void> {
-  const res = await fetch("/api/skills/enable", {
+  await requestVoid("/api/skills/enable", "Enable skill failed", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ skill_name: skillName }),
+    body: { skill_name: skillName },
   });
-  if (!res.ok) throw new Error("Enable skill failed");
 }
 
 export async function disableSkill(skillName: string): Promise<void> {
-  const res = await fetch("/api/skills/disable", {
+  await requestVoid("/api/skills/disable", "Disable skill failed", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ skill_name: skillName }),
+    body: { skill_name: skillName },
   });
-  if (!res.ok) throw new Error("Disable skill failed");
 }
 
 export async function getAgentRunningConfig(): Promise<AgentRunningConfig> {
-  const res = await fetch("/api/agent/running-config");
-  if (!res.ok) throw new Error("Get agent config failed");
-  return res.json();
+  return requestJson("/api/agent/running-config", "Get agent config failed");
 }
 
 export async function updateAgentRunningConfig(
   config: AgentRunningConfig,
 ): Promise<AgentRunningConfig> {
-  const res = await fetch("/api/agent/running-config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-  if (!res.ok) throw new Error("Update agent config failed");
-  return res.json();
+  return requestJson(
+    "/api/agent/running-config",
+    "Update agent config failed",
+    {
+      method: "PUT",
+      body: config,
+    },
+  );
 }
 
 export async function listProviders(): Promise<ProviderItem[]> {
-  const res = await fetch("/api/providers");
-  if (!res.ok) throw new Error("List providers failed");
-  const data = await res.json();
+  const data = await requestJson<{ providers?: ProviderItem[] }>(
+    "/api/providers",
+    "List providers failed",
+  );
   return Array.isArray(data.providers) ? data.providers : [];
 }
 
 export async function createProvider(provider: ProviderItem): Promise<void> {
-  const res = await fetch("/api/providers", {
+  await requestVoid("/api/providers", "Create provider failed", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(provider),
+    body: provider,
   });
-  if (!res.ok) throw new Error("Create provider failed");
 }
 
 export async function updateProvider(
   name: string,
   settings: Partial<Omit<ProviderItem, "name" | "enabled">>,
 ): Promise<void> {
-  const res = await fetch(
+  await requestVoid(
     `/api/providers/${encodeURIComponent(name)}/settings`,
+    "Update provider failed",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: settings,
     },
   );
-  if (!res.ok) throw new Error("Update provider failed");
 }
 
 export async function setProviderEnabled(
@@ -603,39 +633,35 @@ export async function setProviderEnabled(
   enabled: boolean,
 ): Promise<void> {
   const action = enabled ? "enable" : "disable";
-  const res = await fetch(
+  await requestVoid(
     `/api/providers/${encodeURIComponent(name)}/${action}`,
+    "Set provider enabled failed",
     { method: "POST" },
   );
-  if (!res.ok) throw new Error("Set provider enabled failed");
 }
 
 export async function applyProvider(name: string): Promise<void> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(name)}/apply`, {
-    method: "POST",
-  });
-  if (!res.ok) throw new Error("Apply provider failed");
+  await requestVoid(
+    `/api/providers/${encodeURIComponent(name)}/apply`,
+    "Apply provider failed",
+    { method: "POST" },
+  );
 }
 
 export async function deleteProvider(name: string): Promise<void> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error("Delete provider failed");
+  await requestVoid(
+    `/api/providers/${encodeURIComponent(name)}`,
+    "Delete provider failed",
+    { method: "DELETE" },
+  );
 }
 
 export async function listAvailableModels(): Promise<any[]> {
-  const res = await fetch("/api/providers/models");
-  if (!res.ok) throw new Error("List models failed");
-  const data = await res.json();
+  const data = await requestJson<{ models?: any[] }>(
+    "/api/providers/models",
+    "List models failed",
+  );
   return Array.isArray(data.models) ? data.models : [];
-}
-
-export function appendMessage(
-  messages: ChatMessage[],
-  next: ChatMessage,
-): ChatMessage[] {
-  return [...messages, next];
 }
 
 /**
@@ -646,6 +672,7 @@ export function appendMessage(
 export function streamChat(
   message: string,
   sessionId: string | undefined,
+  agentId: string | undefined,
   onEvent: (event: StreamEvent) => void,
 ): AbortController {
   const controller = new AbortController();
@@ -677,7 +704,11 @@ export function streamChat(
         const res = await fetch("/api/agent/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, session_id: sessionId }),
+          body: JSON.stringify({
+            message,
+            session_id: sessionId,
+            agent_id: agentId,
+          }),
           signal: controller.signal,
           cache: "no-store",
         });
@@ -700,6 +731,7 @@ export function streamChat(
           type: "done",
           content: finalContent,
           session_id: sid,
+          agent_id: agentId,
         });
       } catch (err) {
         if ((err as any)?.name === "AbortError") return;
@@ -745,7 +777,12 @@ export function streamChat(
       const res = await fetch("/api/agent/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, session_id: sessionId, stream: true }),
+        body: JSON.stringify({
+          message,
+          session_id: sessionId,
+          agent_id: agentId,
+          stream: true,
+        }),
         signal: controller.signal,
         cache: "no-store",
       });

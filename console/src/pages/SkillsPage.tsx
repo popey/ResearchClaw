@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Puzzle, RefreshCw } from "lucide-react";
 import {
   listSkills,
@@ -17,6 +17,10 @@ import {
   SurfaceCard,
 } from "../components/ui";
 
+function getSkillName(skill: SkillItem, idx: number): string {
+  return skill.name || `skill-${idx}`;
+}
+
 export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [active, setActive] = useState<string[]>([]);
@@ -25,8 +29,12 @@ export default function SkillsPage() {
   const [notice, setNotice] = useState("");
 
   async function onLoad() {
-    setSkills(await listSkills());
-    setActive(await listActiveSkills());
+    const [skillRows, activeRows] = await Promise.all([
+      listSkills(),
+      listActiveSkills(),
+    ]);
+    setSkills(skillRows);
+    setActive(activeRows);
     setLoaded(true);
   }
 
@@ -35,22 +43,23 @@ export default function SkillsPage() {
   }, []);
 
   async function onToggle(skillName: string, isActive: boolean) {
-    if (isActive) {
-      await disableSkill(skillName);
-      setNotice(`已禁用技能 ${skillName}`);
-    } else {
-      await enableSkill(skillName);
-      setNotice(`已启用技能 ${skillName}`);
-    }
+    const action = isActive ? disableSkill : enableSkill;
+    await action(skillName);
+    setNotice(`已${isActive ? "禁用" : "启用"}技能 ${skillName}`);
     await onLoad();
   }
 
-  const filteredSkills = skills.filter((skill, idx) => {
-    const skillName = skill.name || `skill-${idx}`;
-    return `${skillName} ${skill.description || ""}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase());
-  });
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredSkills = useMemo(
+    () =>
+      skills.filter((skill, idx) => {
+        const skillName = getSkillName(skill, idx);
+        return `${skillName} ${skill.description || ""}`
+          .toLowerCase()
+          .includes(normalizedQuery);
+      }),
+    [normalizedQuery, skills],
+  );
 
   return (
     <div className="panel">
@@ -104,7 +113,7 @@ export default function SkillsPage() {
             <div className="empty-inline">当前筛选条件下没有匹配技能</div>
           )}
           {filteredSkills.map((skill: SkillItem, idx: number) => {
-            const skillName = skill.name || `skill-${idx}`;
+            const skillName = getSkillName(skill, idx);
             const isActive = active.includes(skillName);
             return (
               <div key={skillName} className="data-row">

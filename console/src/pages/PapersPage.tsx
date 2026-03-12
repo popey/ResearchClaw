@@ -14,13 +14,17 @@ export default function PapersPage() {
   const [papers, setPapers] = useState<PaperItem[]>([]);
   const [paperLoading, setPaperLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const normalizedPaperQuery = paperQuery.trim();
+  const showInitialEmptyState = !hasSearched && papers.length === 0;
+  const showNoResultsState =
+    hasSearched && papers.length === 0 && !paperLoading;
 
   async function onSearchPapers() {
-    if (!paperQuery.trim()) return;
+    if (!normalizedPaperQuery) return;
     setPaperLoading(true);
     setHasSearched(true);
     try {
-      const result = await searchArxiv(paperQuery);
+      const result = await searchArxiv(normalizedPaperQuery);
       setPapers(result);
     } catch (error) {
       setPapers([{ title: t("检索失败: {error}", { error: String(error) }) }]);
@@ -44,16 +48,23 @@ export default function PapersPage() {
           }
           placeholder={t("输入研究主题关键词...")}
           onKeyDown={(e) => {
-            if (e.key === "Enter") onSearchPapers();
+            if (e.key === "Enter") {
+              void onSearchPapers();
+            }
           }}
         />
-        <button onClick={onSearchPapers} disabled={paperLoading}>
+        <button
+          onClick={() => {
+            void onSearchPapers();
+          }}
+          disabled={paperLoading || !normalizedPaperQuery}
+        >
           <Search size={15} />
           {paperLoading ? t("检索中...") : t("检索 ArXiv")}
         </button>
       </div>
 
-      {!hasSearched && papers.length === 0 && (
+      {showInitialEmptyState && (
         <EmptyState
           icon={<FileText size={28} />}
           title={t("搜索学术论文")}
@@ -61,7 +72,7 @@ export default function PapersPage() {
         />
       )}
 
-      {hasSearched && papers.length === 0 && !paperLoading && (
+      {showNoResultsState && (
         <EmptyState
           icon={<Search size={28} />}
           title={t("未找到相关论文")}

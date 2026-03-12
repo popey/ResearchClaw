@@ -1386,6 +1386,46 @@ class FeishuChannel(BaseChannel):
             )
         return recv
 
+    @staticmethod
+    def _split_send_parts(
+        parts: List[OutgoingContentPart],
+    ) -> Tuple[List[str], List[OutgoingContentPart]]:
+        text_parts: List[str] = []
+        media_parts: List[OutgoingContentPart] = []
+        for part in parts:
+            part_type = getattr(part, "type", None) or (
+                part.get("type") if isinstance(part, dict) else None
+            )
+            text_val = getattr(part, "text", None) or (
+                part.get("text") if isinstance(part, dict) else None
+            )
+            refusal_val = getattr(part, "refusal", None) or (
+                part.get("refusal") if isinstance(part, dict) else None
+            )
+            if part_type == ContentType.TEXT and text_val:
+                text_parts.append(text_val or "")
+            elif part_type == ContentType.REFUSAL and refusal_val:
+                text_parts.append(refusal_val or "")
+            elif part_type in (
+                ContentType.IMAGE,
+                ContentType.FILE,
+                ContentType.VIDEO,
+                ContentType.AUDIO,
+            ):
+                media_parts.append(part)
+        return text_parts, media_parts
+
+    def _build_prefixed_body(
+        self,
+        text_parts: List[str],
+        meta: Optional[Dict[str, Any]],
+    ) -> str:
+        prefix = (meta or {}).get("bot_prefix", "") or self.bot_prefix or ""
+        body = "\n".join(text_parts).strip()
+        if prefix and body:
+            return prefix + body
+        return body
+
     async def send_content_parts(
         self,
         to_handle: str,
@@ -1411,31 +1451,8 @@ class FeishuChannel(BaseChannel):
             receive_id_type,
             (receive_id or "")[:20],
         )
-        prefix = (meta or {}).get("bot_prefix", "") or self.bot_prefix or ""
-        text_parts: List[str] = []
-        media_parts: List[OutgoingContentPart] = []
-        for p in parts:
-            t = getattr(p, "type", None) or (
-                p.get("type") if isinstance(p, dict) else None
-            )
-            text_val = getattr(p, "text", None) or (
-                p.get("text") if isinstance(p, dict) else None
-            )
-            refusal_val = getattr(p, "refusal", None) or (
-                p.get("refusal") if isinstance(p, dict) else None
-            )
-            if t == ContentType.TEXT and text_val:
-                text_parts.append(text_val or "")
-            elif t == ContentType.REFUSAL and refusal_val:
-                text_parts.append(refusal_val or "")
-            elif t in (
-                ContentType.IMAGE,
-                ContentType.FILE,
-                ContentType.VIDEO,
-                ContentType.AUDIO,
-            ):
-                media_parts.append(p)
-        body = "\n".join(text_parts).strip()
+        text_parts, media_parts = self._split_send_parts(parts)
+        body = self._build_prefixed_body(text_parts, meta)
         logger.info(
             "feishu send_content_parts: to_handle=%s text_parts=%s "
             "media_count=%s media_types=%s",
@@ -1444,8 +1461,6 @@ class FeishuChannel(BaseChannel):
             len(media_parts),
             [getattr(m, "type", None) for m in media_parts],
         )
-        if prefix and body:
-            body = prefix + body
         if body:
             await self._send_text(receive_id_type, receive_id, body)
         for part in media_parts:

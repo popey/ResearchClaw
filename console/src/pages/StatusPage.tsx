@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -40,119 +40,157 @@ type OverviewState = {
   heartbeatEnabled: boolean | null;
 };
 
+const INITIAL_OVERVIEW: OverviewState = {
+  health: "unknown",
+  agentName: "-",
+  running: null,
+  toolCount: null,
+  activeSkills: null,
+  heartbeatEnabled: null,
+};
+
+function resolveDisplayAgent(controlData: any) {
+  const runnerAgents = Array.isArray(controlData?.runtime?.runner?.agents)
+    ? controlData.runtime.runner.agents
+    : [];
+  return (
+    runnerAgents.find((item: any) => item?.default) ||
+    runnerAgents.find((item: any) => item?.running) ||
+    runnerAgents[0] ||
+    null
+  );
+}
+
+function buildOverviewState(
+  controlData: any,
+  statusData: any,
+  healthResult: PromiseSettledResult<any>,
+  activeSkillsResult: PromiseSettledResult<any>,
+  heartbeatResult: PromiseSettledResult<any>,
+): OverviewState {
+  const displayAgent = resolveDisplayAgent(controlData);
+  const runningFromControl =
+    typeof controlData?.runner_running === "boolean"
+      ? controlData.runner_running
+      : typeof controlData?.runtime?.runner?.running === "boolean"
+      ? controlData.runtime.runner.running
+      : null;
+  const activeSkillsFromApi =
+    activeSkillsResult.status === "fulfilled"
+      ? activeSkillsResult.value.length
+      : null;
+  const heartbeatFromControl = controlData?.runtime?.heartbeat || null;
+  const heartbeatFromApi =
+    heartbeatResult.status === "fulfilled" ? heartbeatResult.value : null;
+
+  return {
+    health:
+      healthResult.status === "fulfilled"
+        ? healthResult.value.status
+        : controlData || statusData
+        ? "ok"
+        : "down",
+    agentName: String(
+      controlData?.runtime?.runner?.agent_name ||
+        statusData?.agent_name ||
+        displayAgent?.id ||
+        controlData?.runtime?.runner?.default_agent_id ||
+        "-",
+    ),
+    running:
+      typeof runningFromControl === "boolean"
+        ? runningFromControl
+        : statusData
+        ? Boolean(statusData.running)
+        : null,
+    toolCount:
+      statusData?.tool_count != null ||
+      controlData?.runtime?.runner?.tool_count != null ||
+      displayAgent?.tool_count != null
+        ? Number(
+            controlData?.runtime?.runner?.tool_count ??
+              statusData?.tool_count ??
+              displayAgent?.tool_count ??
+              0,
+          )
+        : null,
+    activeSkills:
+      controlData?.runtime?.skills?.active_count != null
+        ? Number(controlData.runtime.skills.active_count)
+        : activeSkillsFromApi,
+    heartbeatEnabled:
+      typeof heartbeatFromControl?.enabled === "boolean"
+        ? Boolean(heartbeatFromControl.enabled)
+        : typeof heartbeatFromApi?.enabled === "boolean"
+        ? Boolean(heartbeatFromApi.enabled)
+        : null,
+  };
+}
+
+function shouldRetryOverview(overview: OverviewState): boolean {
+  return (
+    overview.health !== "ok" ||
+    overview.running === null ||
+    overview.toolCount === null ||
+    overview.activeSkills === null ||
+    overview.heartbeatEnabled === null
+  );
+}
+
 export default function StatusPage() {
   const { t } = useI18n();
-  const [overview, setOverview] = useState<OverviewState>({
-    health: "unknown",
-    agentName: "-",
-    running: null,
-    toolCount: null,
-    activeSkills: null,
-    heartbeatEnabled: null,
-  });
+  const [overview, setOverview] = useState<OverviewState>(INITIAL_OVERVIEW);
   const [control, setControl] = useState<any>(null);
   const [logTail, setLogTail] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
-  async function onRefreshStatus() {
+  const onRefreshStatus = useCallback(async () => {
     setLoading(true);
-    const [
-      controlResult,
-      statusResult,
-      healthResult,
-      logsResult,
-      activeSkillsResult,
-      heartbeatResult,
-    ] = await Promise.allSettled([
-      getControlStatus(),
-      getStatus(),
-      getHealth(),
-      getControlLogs(80),
-      listActiveSkills(),
-      getHeartbeat(),
-    ]);
+    try {
+      const [
+        controlResult,
+        statusResult,
+        healthResult,
+        logsResult,
+        activeSkillsResult,
+        heartbeatResult,
+      ] = await Promise.allSettled([
+        getControlStatus(),
+        getStatus(),
+        getHealth(),
+        getControlLogs(80),
+        listActiveSkills(),
+        getHeartbeat(),
+      ]);
 
-    const controlData =
-      controlResult.status === "fulfilled" ? controlResult.value : null;
-    const statusData =
-      statusResult.status === "fulfilled" ? statusResult.value : null;
-    const runnerAgents = Array.isArray(controlData?.runtime?.runner?.agents)
-      ? controlData.runtime.runner.agents
-      : [];
-    const displayAgent =
-      runnerAgents.find((item: any) => item?.default) ||
-      runnerAgents.find((item: any) => item?.running) ||
-      runnerAgents[0] ||
-      null;
-    const runningFromControl =
-      typeof controlData?.runner_running === "boolean"
-        ? controlData.runner_running
-        : typeof controlData?.runtime?.runner?.running === "boolean"
-        ? controlData.runtime.runner.running
-        : null;
-    const activeSkillsFromControl = controlData?.runtime?.skills?.active_count;
-    const activeSkillsFromApi =
-      activeSkillsResult.status === "fulfilled"
-        ? activeSkillsResult.value.length
-        : null;
-    const heartbeatFromControl = controlData?.runtime?.heartbeat || null;
-    const heartbeatFromApi =
-      heartbeatResult.status === "fulfilled" ? heartbeatResult.value : null;
+      const controlData =
+        controlResult.status === "fulfilled" ? controlResult.value : null;
+      const statusData =
+        statusResult.status === "fulfilled" ? statusResult.value : null;
 
-    setControl(controlData);
-    setOverview({
-      health:
-        healthResult.status === "fulfilled"
-          ? healthResult.value.status
-          : controlData || statusData
-          ? "ok"
-          : "down",
-      agentName: String(
-        controlData?.runtime?.runner?.agent_name ||
-          statusData?.agent_name ||
-          displayAgent?.id ||
-          controlData?.runtime?.runner?.default_agent_id ||
-          "-",
-      ),
-      running:
-        typeof runningFromControl === "boolean"
-          ? runningFromControl
-          : statusData
-          ? Boolean(statusData.running)
-          : null,
-      toolCount:
-        statusData?.tool_count != null ||
-        controlData?.runtime?.runner?.tool_count != null ||
-        displayAgent?.tool_count != null
-          ? Number(
-              controlData?.runtime?.runner?.tool_count ??
-                statusData?.tool_count ??
-                displayAgent?.tool_count ??
-                0,
-            )
-          : null,
-      activeSkills:
-        activeSkillsFromControl != null
-          ? Number(activeSkillsFromControl)
-          : activeSkillsFromApi,
-      heartbeatEnabled:
-        typeof heartbeatFromControl?.enabled === "boolean"
-          ? Boolean(heartbeatFromControl.enabled)
-          : typeof heartbeatFromApi?.enabled === "boolean"
-          ? Boolean(heartbeatFromApi.enabled)
-          : null,
-    });
-    setLogTail(
-      logsResult.status === "fulfilled"
-        ? String(logsResult.value?.content || "")
-        : "",
-    );
-    setLoading(false);
-  }
+      setControl(controlData);
+      setOverview(
+        buildOverviewState(
+          controlData,
+          statusData,
+          healthResult,
+          activeSkillsResult,
+          heartbeatResult,
+        ),
+      );
+      setLogTail(
+        logsResult.status === "fulfilled"
+          ? String(logsResult.value?.content || "")
+          : "",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void onRefreshStatus();
-  }, []);
+  }, [onRefreshStatus]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -170,17 +208,10 @@ export default function StatusPage() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisible);
     };
-  }, []);
+  }, [onRefreshStatus]);
 
   useEffect(() => {
-    const shouldRetry =
-      overview.health !== "ok" ||
-      overview.running === null ||
-      overview.toolCount === null ||
-      overview.activeSkills === null ||
-      overview.heartbeatEnabled === null;
-
-    if (!shouldRetry) {
+    if (!shouldRetryOverview(overview)) {
       return;
     }
 
@@ -189,7 +220,7 @@ export default function StatusPage() {
     }, 2500);
 
     return () => window.clearTimeout(retry);
-  }, [overview]);
+  }, [overview, onRefreshStatus]);
 
   return (
     <div className="panel">

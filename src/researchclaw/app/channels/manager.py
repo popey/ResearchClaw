@@ -114,6 +114,15 @@ def _put_pending_merged(
         q.put_nowait(o)
 
 
+async def _stop_channel_safely(ch: BaseChannel, *, context: str) -> None:
+    try:
+        await ch.stop()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Failed to stop %s: %s", context, ch.channel)
+
+
 class ChannelManager:
     """Manages registration, lifecycle, and message routing for channels.
 
@@ -355,6 +364,46 @@ class ChannelManager:
             payload,
         )
 
+    async def _resolve_dispatch_channel(
+        self,
+        channel: str,
+    ) -> tuple[BaseChannel, str]:
+        requested = str(channel or "").strip().lower()
+        base, _, account_id = requested.partition(":")
+        ch = await self.get_channel(requested)
+        if not ch and base:
+            ch = await self.get_channel(base)
+        if not ch:
+            raise KeyError(f"channel not found: {channel}")
+        return ch, account_id
+
+    @staticmethod
+    def _channel_bot_prefix(ch: BaseChannel) -> str | None:
+        return getattr(ch, "bot_prefix", None) or getattr(
+            ch,
+            "_bot_prefix",
+            None,
+        )
+
+    def _build_dispatch_meta(
+        self,
+        ch: BaseChannel,
+        *,
+        session_id: str,
+        user_id: str,
+        account_id: str = "",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        merged_meta = dict(meta or {})
+        if account_id:
+            merged_meta.setdefault("account_id", account_id)
+        bot_prefix = self._channel_bot_prefix(ch)
+        if bot_prefix and "bot_prefix" not in merged_meta:
+            merged_meta["bot_prefix"] = bot_prefix
+        merged_meta["session_id"] = session_id
+        merged_meta["user_id"] = user_id
+        return merged_meta
+
     # ── consumer loop ──────────────────────────────────────────────
 
     async def _consume_channel_loop(
@@ -477,16 +526,12 @@ class ChannelManager:
             snapshot = list(self.channels)
         for ch in snapshot:
             ch.set_enqueue(None)
-
-        async def _stop(ch: BaseChannel) -> None:
-            try:
-                await ch.stop()
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("Failed to stop channel: %s", ch.channel)
-
-        await asyncio.gather(*[_stop(ch) for ch in reversed(snapshot)])
+        await asyncio.gather(
+            *[
+                _stop_channel_safely(ch, context="channel")
+                for ch in reversed(snapshot)
+            ],
+        )
 
     # ── channel access ─────────────────────────────────────────────
 
@@ -547,12 +592,10 @@ class ChannelManager:
                 logger.info("Added new channel: %s", name)
             else:
                 logger.info("Stopping old channel: %s", name)
-                try:
-                    await old_channel.stop()
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    logger.exception("Failed to stop old channel: %s", name)
+                await _stop_channel_safely(
+                    old_channel,
+                    context="old channel",
+                )
 
     async def remove_channel(self, name: str) -> bool:
         """Remove a channel by name and stop its runtime resources."""
@@ -567,12 +610,7 @@ class ChannelManager:
             return False
 
         old_channel.set_enqueue(None)
-        try:
-            await old_channel.stop()
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception("Failed to stop removed channel: %s", name)
+        await _stop_channel_safely(old_channel, context="removed channel")
 
         await self._cancel_consumers_for_channel(name)
         self._queues.pop(name, None)
@@ -601,30 +639,18 @@ class ChannelManager:
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a runner event to a specific channel."""
-        requested = str(channel or "").strip().lower()
-        base, _, account_id = requested.partition(":")
-        ch = await self.get_channel(requested)
-        if not ch and base:
-            ch = await self.get_channel(base)
-        if not ch:
-            raise KeyError(f"channel not found: {channel}")
-        merged_meta = dict(meta or {})
-        if account_id:
-            merged_meta.setdefault("account_id", account_id)
-        merged_meta["session_id"] = session_id
-        merged_meta["user_id"] = user_id
-        bot_prefix = getattr(ch, "bot_prefix", None) or getattr(
-            ch,
-            "_bot_prefix",
-            None,
-        )
-        if bot_prefix and "bot_prefix" not in merged_meta:
-            merged_meta["bot_prefix"] = bot_prefix
+        ch, account_id = await self._resolve_dispatch_channel(channel)
         await ch.send_event(
             user_id=user_id,
             session_id=session_id,
             event=event,
-            meta=merged_meta,
+            meta=self._build_dispatch_meta(
+                ch,
+                session_id=session_id,
+                user_id=user_id,
+                account_id=account_id,
+                meta=meta,
+            ),
         )
 
     async def send_text(
@@ -637,13 +663,7 @@ class ChannelManager:
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send plain text to a specific channel (for cron / proactive)."""
-        requested = str(channel or "").strip().lower()
-        base, _, account_id = requested.partition(":")
-        ch = await self.get_channel(requested)
-        if not ch and base:
-            ch = await self.get_channel(base)
-        if not ch:
-            raise KeyError(f"channel not found: {channel}")
+        ch, account_id = await self._resolve_dispatch_channel(channel)
 
         to_handle = ch.to_handle_from_target(
             user_id=user_id,
@@ -657,23 +677,16 @@ class ChannelManager:
             (to_handle or "")[:60],
         )
 
-        merged_meta = dict(meta or {})
-        if account_id:
-            merged_meta.setdefault("account_id", account_id)
-        bot_prefix = getattr(ch, "bot_prefix", None) or getattr(
-            ch,
-            "_bot_prefix",
-            None,
-        )
-        if bot_prefix and "bot_prefix" not in merged_meta:
-            merged_meta["bot_prefix"] = bot_prefix
-        merged_meta["session_id"] = session_id
-        merged_meta["user_id"] = user_id
-
         await ch.send_content_parts(
             to_handle,
             [TextContent(type=ContentType.TEXT, text=text)],
-            merged_meta,
+            self._build_dispatch_meta(
+                ch,
+                session_id=session_id,
+                user_id=user_id,
+                account_id=account_id,
+                meta=meta,
+            ),
         )
 
     # ── listing ────────────────────────────────────────────────────

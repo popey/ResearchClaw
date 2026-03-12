@@ -444,6 +444,49 @@ class DingTalkChannel(BaseChannel):
             body = bot_prefix + body
         return body
 
+    @staticmethod
+    def _split_send_parts(
+        parts: List[OutgoingContentPart],
+    ) -> tuple[list[str], list[OutgoingContentPart]]:
+        text_parts: list[str] = []
+        media_parts: list[OutgoingContentPart] = []
+        for part in parts:
+            part_type = getattr(part, "type", None) or (
+                part.get("type") if isinstance(part, dict) else None
+            )
+            text_val = getattr(part, "text", None) or (
+                part.get("text") if isinstance(part, dict) else None
+            )
+            refusal_val = getattr(part, "refusal", None) or (
+                part.get("refusal") if isinstance(part, dict) else None
+            )
+            if part_type == ContentType.TEXT and text_val:
+                text_parts.append(text_val or "")
+            elif part_type == ContentType.REFUSAL and refusal_val:
+                text_parts.append(refusal_val or "")
+            elif part_type in (
+                ContentType.IMAGE,
+                ContentType.FILE,
+                ContentType.VIDEO,
+                ContentType.AUDIO,
+            ):
+                media_parts.append(part)
+        return text_parts, media_parts
+
+    @staticmethod
+    def _compose_prefixed_body(
+        text_parts: list[str],
+        *,
+        prefix: str,
+        include_prefix_without_body: bool = False,
+    ) -> str:
+        body = "\n".join(text_parts) if text_parts else ""
+        if prefix and body:
+            return prefix + body
+        if prefix and include_prefix_without_body:
+            return prefix
+        return body
+
     async def _send_payload_via_session_webhook(
         self,
         session_webhook: str,
@@ -1029,36 +1072,13 @@ class DingTalkChannel(BaseChannel):
         When session_webhook is available, sends text then image/file
         messages (upload media first for image/file).
         """
-        text_parts = []
-        media_parts: List[OutgoingContentPart] = []
-        for p in parts:
-            t = getattr(p, "type", None) or (
-                p.get("type") if isinstance(p, dict) else None
-            )
-            text_val = getattr(p, "text", None) or (
-                p.get("text") if isinstance(p, dict) else None
-            )
-            refusal_val = getattr(p, "refusal", None) or (
-                p.get("refusal") if isinstance(p, dict) else None
-            )
-            if t == ContentType.TEXT and text_val:
-                text_parts.append(text_val or "")
-            elif t == ContentType.REFUSAL and refusal_val:
-                text_parts.append(refusal_val or "")
-            elif t == ContentType.IMAGE:
-                media_parts.append(p)
-            elif t == ContentType.FILE:
-                media_parts.append(p)
-            elif t == ContentType.VIDEO:
-                media_parts.append(p)
-            elif t == ContentType.AUDIO:
-                media_parts.append(p)
-        body = "\n".join(text_parts) if text_parts else ""
+        text_parts, media_parts = self._split_send_parts(parts)
         prefix = (meta or {}).get("bot_prefix", "") or ""
-        if prefix and body:
-            body = prefix + body
-        elif prefix and not body and not media_parts:
-            body = prefix
+        body = self._compose_prefixed_body(
+            text_parts,
+            prefix=prefix,
+            include_prefix_without_body=not media_parts,
+        )
         m = meta or {}
         session_webhook = await self._get_session_webhook_for_send(
             to_handle,
@@ -1115,9 +1135,11 @@ class DingTalkChannel(BaseChannel):
                     fid = getattr(p, "file_id", None)
                     url_or_id = furl or fid
                     text_parts.append(f"[File: {url_or_id}]")
-            body = "\n".join(text_parts) if text_parts else ""
-            if prefix and body:
-                body = prefix + body
+            body = self._compose_prefixed_body(
+                text_parts,
+                prefix=prefix,
+                include_prefix_without_body=False,
+            )
         if (
             m.get("reply_loop") is not None
             and m.get("reply_future") is not None

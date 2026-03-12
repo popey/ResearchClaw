@@ -50,51 +50,78 @@ class DiscoverModelsResponse(BaseModel):
     models: list[dict[str, str]] = Field(default_factory=list)
 
 
+def _provider_store_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail="Provider store not available",
+    )
+
+
+def _get_provider_store():
+    try:
+        from researchclaw.providers.store import ProviderStore
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise _provider_store_unavailable() from exc
+    return ProviderStore()
+
+
+def _mask_api_key(value: str | None) -> str | None:
+    key = (value or "").strip()
+    if not key:
+        return None
+    return key[:8] + "..." if len(key) > 8 else "***"
+
+
+def _masked_provider_dict(provider: dict[str, Any]) -> dict[str, Any]:
+    result = dict(provider)
+    masked = _mask_api_key(result.get("api_key"))
+    if masked:
+        result["api_key"] = masked
+    return result
+
+
 def _mask(providers: list[dict]) -> list[dict]:
     """Mask API keys for display."""
-    for p in providers:
-        key = p.get("api_key") or ""
-        if key:
-            p["api_key"] = key[:8] + "..." if len(key) > 8 else "***"
-    return providers
+    return [_masked_provider_dict(provider) for provider in providers]
+
+
+def _get_provider_or_404(store: Any, name: str):
+    provider = store.get_provider(name)
+    if provider is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider '{name}' not found",
+        )
+    return provider
 
 
 @router.get("")
 async def list_providers():
     """List configured LLM providers (API keys masked)."""
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
+        store = _get_provider_store()
         providers = store.list_providers()
         return {"providers": _mask(providers)}
-    except ImportError:
+    except HTTPException:
+        return {"providers": [], "note": "Provider store not yet initialized"}
+    except Exception:
         return {"providers": [], "note": "Provider store not yet initialized"}
 
 
 @router.post("")
 async def add_provider(config: ProviderConfig):
     """Add a new provider configuration."""
-    try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
-        store.save_provider(config.model_dump())
-        return {"status": "ok", "provider": config.name}
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
+    store = _get_provider_store()
+    store.save_provider(config.model_dump())
+    return {"status": "ok", "provider": config.name}
 
 
 @router.post("/{name:path}/enable")
 async def enable_provider(name: str, req: Request):
     """Set this provider as the active one; disable all others."""
+    del req
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
+        store = _get_provider_store()
         store.set_enabled(name)
         return {"status": "ok", "name": name, "enabled": True}
     except KeyError:
@@ -102,20 +129,16 @@ async def enable_provider(name: str, req: Request):
             status_code=404,
             detail=f"Provider '{name}' not found",
         )
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
+    except HTTPException:
+        raise
 
 
 @router.post("/{name:path}/disable")
 async def disable_provider(name: str, req: Request):
     """Disable this provider without affecting others."""
+    del req
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
+        store = _get_provider_store()
         store.set_disabled(name)
         return {"status": "ok", "name": name, "enabled": False}
     except KeyError:
@@ -123,42 +146,28 @@ async def disable_provider(name: str, req: Request):
             status_code=404,
             detail=f"Provider '{name}' not found",
         )
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
+    except HTTPException:
+        raise
 
 
 @router.post("/{name:path}/settings")
 async def update_provider_settings(name: str, update: ProviderSettingsUpdate):
     """Update settings of an existing provider (partial update)."""
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
+        store = _get_provider_store()
         fields = update.model_dump(exclude_none=True)
         if fields.get("api_key") == "":
             fields.pop("api_key")
         updated = store.update_provider_settings(name, fields)
-        result = updated.to_dict()
-        if result.get("api_key"):
-            result["api_key"] = (
-                result["api_key"][:8] + "..."
-                if len(result["api_key"]) > 8
-                else "***"
-            )
+        result = _masked_provider_dict(updated.to_dict())
         return {"status": "ok", "provider": result}
     except KeyError:
         raise HTTPException(
             status_code=404,
             detail=f"Provider '{name}' not found",
         )
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
+    except HTTPException:
+        raise
 
 
 @router.put("/{name:path}")
@@ -174,15 +183,8 @@ async def apply_provider(name: str, req: Request):
     Reads the full config (with real API key) from store and restarts the agent.
     """
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
-        provider = store.get_provider(name)
-        if provider is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Provider '{name}' not found",
-            )
+        store = _get_provider_store()
+        provider = _get_provider_or_404(store, name)
 
         runner = getattr(req.app.state, "runner", None)
         if runner is None:
@@ -203,11 +205,6 @@ async def apply_provider(name: str, req: Request):
         return {"status": "ok", "applied": name}
     except HTTPException:
         raise
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
     except Exception as e:
         logger.exception("Failed to apply provider")
         raise HTTPException(status_code=500, detail=str(e))
@@ -217,16 +214,11 @@ async def apply_provider(name: str, req: Request):
 async def remove_provider(name: str):
     """Remove a provider."""
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
+        store = _get_provider_store()
         store.remove_provider(name)
         return {"status": "deleted", "provider": name}
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
+    except HTTPException:
+        raise
     except KeyError:
         raise HTTPException(
             status_code=404,
@@ -266,15 +258,8 @@ def _safe_join_url(base_url: str, suffix: str) -> str:
 async def test_provider(name: str):
     """Lightweight provider connectivity/config test."""
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
-        provider = store.get_provider(name)
-        if provider is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Provider '{name}' not found",
-            )
+        store = _get_provider_store()
+        provider = _get_provider_or_404(store, name)
 
         ptype = (provider.provider_type or "").lower()
         base_url = provider.base_url or ""
@@ -322,11 +307,6 @@ async def test_provider(name: str):
         )
     except HTTPException:
         raise
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
 
 
 @router.post(
@@ -336,15 +316,8 @@ async def test_provider(name: str):
 async def discover_models(name: str):
     """Discover candidate models for a provider."""
     try:
-        from researchclaw.providers.store import ProviderStore
-
-        store = ProviderStore()
-        provider = store.get_provider(name)
-        if provider is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Provider '{name}' not found",
-            )
+        store = _get_provider_store()
+        provider = _get_provider_or_404(store, name)
 
         ptype = (provider.provider_type or "").lower()
         if ptype == "ollama":
@@ -387,8 +360,3 @@ async def discover_models(name: str):
         )
     except HTTPException:
         raise
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="Provider store not available",
-        )
