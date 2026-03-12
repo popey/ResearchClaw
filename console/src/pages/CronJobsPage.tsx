@@ -361,30 +361,40 @@ export default function CronJobsPage() {
           </div>
         }
         actions={
-          <div className="toolbar-row">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索任务 / cron / 通道 / 目标"
-            />
-            <select
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as "all" | "enabled" | "paused")
-              }
-            >
-              <option value="all">全部状态</option>
-              <option value="enabled">已启用</option>
-              <option value="paused">已暂停</option>
-            </select>
-            <button className="btn-secondary" onClick={onCreate}>
-              <Plus size={15} />
-              新建任务
-            </button>
-            <button onClick={onLoad}>
-              <RefreshCw size={15} />
-              刷新任务
-            </button>
+          <div className="filter-toolbar">
+            <div className="filter-field filter-field-compact">
+              <span className="filter-field-label">状态</span>
+              <select
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(
+                    e.target.value as "all" | "enabled" | "paused",
+                  )
+                }
+              >
+                <option value="all">全部状态</option>
+                <option value="enabled">已启用</option>
+                <option value="paused">已暂停</option>
+              </select>
+            </div>
+            <div className="filter-field filter-field-grow">
+              <span className="filter-field-label">搜索</span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索任务 / cron / 通道 / 目标"
+              />
+            </div>
+            <div className="filter-toolbar-actions">
+              <button className="btn-secondary" onClick={onCreate}>
+                <Plus size={15} />
+                新建任务
+              </button>
+              <button onClick={onLoad}>
+                <RefreshCw size={15} />
+                刷新任务
+              </button>
+            </div>
           </div>
         }
       />
@@ -449,25 +459,30 @@ export default function CronJobsPage() {
                     {job.name}
                   </div>
                   <div className="data-row-meta">
-                    Cron: {job.cron} ({job.timezone})
+                    {t("Cron: {cron} ({timezone})", {
+                      cron: job.cron,
+                      timezone: job.timezone,
+                    })}
                     <span style={{ margin: "0 6px" }}>·</span>
-                    类型: {job.task_type}
+                    {t("类型: {taskType}", { taskType: job.task_type })}
                     <span style={{ margin: "0 6px" }}>·</span>
-                    通道:{" "}
+                    {t("通道")}:{" "}
                     <span className="inline-row">
                       <ChannelGlyph channel={job.channel || "console"} />
                       {job.channel || "console"}
                     </span>
                     <span style={{ margin: "0 6px" }}>·</span>
-                    目标: {job.target_user_id || "main"}/
-                    {job.target_session_id || "main"}
+                    {t("目标: {user}/{session}", {
+                      user: job.target_user_id || "main",
+                      session: job.target_session_id || "main",
+                    })}
                     <span style={{ margin: "0 6px" }}>·</span>
-                    模式: {job.mode}
+                    {t("模式: {mode}", { mode: job.mode })}
                     <span style={{ margin: "0 6px" }}>·</span>
                     {job.enabled ? (
-                      <Badge variant="success">已启用</Badge>
+                      <Badge variant="success">{t("已启用")}</Badge>
                     ) : (
-                      <Badge variant="neutral">已暂停</Badge>
+                      <Badge variant="neutral">{t("已暂停")}</Badge>
                     )}
                   </div>
                 </div>

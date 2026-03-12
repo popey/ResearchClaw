@@ -25,6 +25,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useSearchParams } from "react-router-dom";
 import { getSessionDetail, getSessions } from "../api";
+import { useI18n } from "../i18n";
 import type { ChatMessage, SessionItem, ToolCallInfo } from "../types";
 import { preprocessMarkdown } from "../utils/markdown";
 import { MetricPill, PageHeader } from "../components/ui";
@@ -52,6 +53,7 @@ function formatTs(ts?: number): string {
 }
 
 export default function ChatPage() {
+  const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const chatState = useSyncExternalStore(
     subscribeChatRuntime,
@@ -61,6 +63,7 @@ export default function ChatPage() {
   const {
     messages,
     sessionId,
+    agentId,
     chatLoading,
     streamContent,
     streamThinking,
@@ -71,6 +74,7 @@ export default function ChatPage() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hydratedSessionRef = useRef<string>("");
+  const openingSessionRef = useRef<string>("");
 
   const canSend = useMemo(
     () => chatInput.trim().length > 0 && !chatLoading,
@@ -78,6 +82,7 @@ export default function ChatPage() {
   );
 
   const querySessionId = searchParams.get("session_id") || undefined;
+  const queryAgentId = searchParams.get("agent_id") || undefined;
   const latestSession = sessions[0];
 
   const loadSessionList = useCallback(async () => {
@@ -109,24 +114,27 @@ export default function ChatPage() {
   useEffect(() => {
     if (!sessionId) return;
     if (querySessionId === sessionId) return;
-    syncQuerySession(sessionId);
+    syncQuerySession(sessionId, agentId);
     // Keep URL and active session aligned while ChatPage is mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, querySessionId]);
+  }, [agentId, querySessionId, sessionId]);
 
   useEffect(() => {
     const targetSessionId = querySessionId || sessionId;
+    const targetAgentId = queryAgentId || agentId;
     if (!targetSessionId) return;
     if (querySessionId && querySessionId === sessionId && messages.length > 0) {
       return;
     }
     // Keep in-memory messages while navigating tabs; only hydrate when needed.
     if (!querySessionId && messages.length > 0) return;
-    if (targetSessionId === hydratedSessionRef.current) return;
-    hydratedSessionRef.current = targetSessionId;
+    const hydrationKey = `${targetAgentId || "main"}:${targetSessionId}`;
+    if (hydrationKey === hydratedSessionRef.current) return;
+    if (hydrationKey === openingSessionRef.current) return;
+    hydratedSessionRef.current = hydrationKey;
 
     let cancelled = false;
-    void getSessionDetail(targetSessionId)
+    void getSessionDetail(targetSessionId, targetAgentId)
       .then((detail) => {
         if (cancelled) return;
         const sessionMessages = Array.isArray(detail?.messages)
@@ -137,6 +145,7 @@ export default function ChatPage() {
           content: String(m?.content ?? ""),
         }));
         replaceChatConversation(targetSessionId, restored, {
+          agentId: detail?.agent_id || targetAgentId,
           stopStreaming: false,
         });
       })
@@ -145,14 +154,19 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [messages.length, querySessionId, sessionId]);
+  }, [agentId, messages.length, queryAgentId, querySessionId, sessionId]);
 
-  function syncQuerySession(nextSessionId?: string) {
+  function syncQuerySession(nextSessionId?: string, nextAgentId?: string) {
     const next = new URLSearchParams(searchParams);
     if (nextSessionId) {
       next.set("session_id", nextSessionId);
     } else {
       next.delete("session_id");
+    }
+    if (nextAgentId) {
+      next.set("agent_id", nextAgentId);
+    } else {
+      next.delete("agent_id");
     }
     setSearchParams(next, { replace: true });
   }
@@ -165,16 +179,31 @@ export default function ChatPage() {
     startNewConversation();
     setChatInput("");
     hydratedSessionRef.current = "";
-    syncQuerySession(undefined);
+    syncQuerySession(undefined, undefined);
   }
 
-  async function onOpenSession(targetSessionId: string) {
+  async function onOpenSession(
+    targetSessionId: string,
+    targetAgentId?: string,
+  ) {
     if (!targetSessionId) return;
+    const requestedAgentId = targetAgentId || undefined;
+    const targetKey = `${requestedAgentId || "main"}:${targetSessionId}`;
+    if (openingSessionRef.current === targetKey) return;
+    if (
+      targetSessionId === sessionId &&
+      (requestedAgentId || "main") === (agentId || "main") &&
+      messages.length > 0
+    ) {
+      syncQuerySession(targetSessionId, requestedAgentId);
+      return;
+    }
+
+    openingSessionRef.current = targetKey;
+    hydratedSessionRef.current = targetKey;
     if (chatLoading) stopChatStreaming();
-    syncQuerySession(targetSessionId);
-    if (targetSessionId === sessionId && messages.length > 0) return;
     try {
-      const detail = await getSessionDetail(targetSessionId);
+      const detail = await getSessionDetail(targetSessionId, requestedAgentId);
       const sessionMessages = Array.isArray(detail?.messages)
         ? detail.messages
         : [];
@@ -182,10 +211,20 @@ export default function ChatPage() {
         role: normalizeChatRole(m?.role),
         content: String(m?.content ?? ""),
       }));
-      hydratedSessionRef.current = targetSessionId;
-      replaceChatConversation(targetSessionId, restored);
+      const resolvedAgentId = detail?.agent_id || requestedAgentId;
+      hydratedSessionRef.current = `${
+        resolvedAgentId || "main"
+      }:${targetSessionId}`;
+      replaceChatConversation(targetSessionId, restored, {
+        agentId: resolvedAgentId,
+      });
+      syncQuerySession(targetSessionId, resolvedAgentId);
     } catch {
       // Ignore and keep current UI state.
+    } finally {
+      if (openingSessionRef.current === targetKey) {
+        openingSessionRef.current = "";
+      }
     }
   }
 
@@ -193,12 +232,15 @@ export default function ChatPage() {
     const text = chatInput.trim();
     if (!text || chatLoading) return;
     const activeSessionId = sendChatMessage(text, {
+      preferredAgentId: queryAgentId || agentId,
       preferredSessionId: sessionId,
     });
     if (!activeSessionId) return;
-    hydratedSessionRef.current = activeSessionId;
+    hydratedSessionRef.current = `${
+      queryAgentId || agentId || "main"
+    }:${activeSessionId}`;
     if (searchParams.get("session_id") !== activeSessionId) {
-      syncQuerySession(activeSessionId);
+      syncQuerySession(activeSessionId, queryAgentId || agentId);
     }
     setChatInput("");
   }
@@ -208,20 +250,18 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="panel">
+    <div className="panel chat-page-shell">
       <PageHeader
-        eyebrow="Research Workflow"
-        title="AI 对话"
-        description="把论文检索、摘要归纳、实验设计和写作修改放进同一条研究线程，减少上下文切换。"
+        title={t("AI 对话")}
         meta={
           <div className="page-header-meta-row">
-            <MetricPill label="历史会话" value={sessions.length} />
+            <MetricPill label={t("历史会话")} value={sessions.length} />
             <MetricPill
-              label="当前模式"
-              value={chatLoading ? "推理中" : "可交互"}
+              label={t("当前模式")}
+              value={chatLoading ? t("推理中") : t("可交互")}
             />
             <MetricPill
-              label="最近更新"
+              label={t("最近更新")}
               value={latestSession ? formatTs(latestSession.updated_at) : "-"}
             />
           </div>
@@ -231,9 +271,7 @@ export default function ChatPage() {
       <div className="chat-layout">
         <aside className="chat-history-panel">
           <div className="chat-history-summary">
-            <span className="chat-history-kicker">Conversation Hub</span>
-            <h3>研究线程</h3>
-            <p>保留连续上下文，随时回到某条会话继续推进。</p>
+            <h3>{t("研究线程")}</h3>
           </div>
 
           <div className="chat-history-header">
@@ -242,7 +280,7 @@ export default function ChatPage() {
               onClick={onNewConversation}
             >
               <PlusCircle size={14} />
-              新对话
+              {t("新对话")}
             </button>
             <button
               className="btn-ghost btn-sm"
@@ -253,13 +291,13 @@ export default function ChatPage() {
                 size={14}
                 className={sessionsLoading ? "spin-icon" : undefined}
               />
-              刷新
+              {t("刷新")}
             </button>
           </div>
 
           <div className="chat-history-list">
             {sessions.length === 0 && (
-              <div className="chat-history-empty">暂无历史会话</div>
+              <div className="chat-history-empty">{t("暂无历史会话")}</div>
             )}
             {sessions.map((session) => (
               <button
@@ -267,14 +305,19 @@ export default function ChatPage() {
                 className={`chat-history-item${
                   session.session_id === sessionId ? " active" : ""
                 }`}
-                onClick={() => void onOpenSession(session.session_id)}
+                onClick={() =>
+                  void onOpenSession(
+                    session.session_id,
+                    session.agent_id || undefined,
+                  )
+                }
               >
                 <div className="chat-history-title">
                   {session.title || session.session_id}
                 </div>
                 <div className="chat-history-meta">
-                  {formatTs(session.updated_at)} · {session.message_count ?? 0}{" "}
-                  条
+                  {formatTs(session.updated_at)} ·{" "}
+                  {t("{count} 条", { count: session.message_count ?? 0 })}
                 </div>
               </button>
             ))}
@@ -284,14 +327,15 @@ export default function ChatPage() {
         <div className="chat-container">
           <div className="chat-toolbar">
             <div className="chat-toolbar-session">
-              当前会话: {sessionId || "未创建"}
+              {t("当前会话: ")}
+              {sessionId || t("未创建")}
             </div>
             <button
               className="btn-secondary btn-sm"
               onClick={onNewConversation}
             >
               <PlusCircle size={14} />
-              新对话
+              {t("新对话")}
             </button>
           </div>
 
@@ -301,11 +345,7 @@ export default function ChatPage() {
                 <div className="chat-empty-icon">
                   <MessageSquare size={28} />
                 </div>
-                <h3>开始一段研究对话</h3>
-                <p>
-                  你可以询问文献综述、实验设计、论文写作、数据分析等任何学术问题。Scholar
-                  会把回答、思考过程和工具调用留在同一个线程中。
-                </p>
+                <h3>{t("开始一段研究对话")}</h3>
                 <div className="chat-suggestion-row">
                   <button
                     className="btn-secondary btn-sm"
@@ -315,7 +355,7 @@ export default function ChatPage() {
                       )
                     }
                   >
-                    趋势梳理
+                    {t("趋势梳理")}
                   </button>
                   <button
                     className="btn-secondary btn-sm"
@@ -331,7 +371,7 @@ export default function ChatPage() {
                       usePrompt("基于这篇论文，给出可复现实验计划和指标表")
                     }
                   >
-                    实验计划
+                    {t("实验计划")}
                   </button>
                 </div>
               </div>
@@ -381,8 +421,21 @@ export default function ChatPage() {
           </div>
 
           <div className="chat-composer-shell">
-            <div className="chat-composer-hint">
-              支持连续追问；如果需要切换主题，建议新建对话保持上下文干净。
+            <div className="chat-composer-meta">
+              {sessionId && (
+                <div className="chat-session-label">
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "var(--success)",
+                      display: "inline-block",
+                    }}
+                  />
+                  Session: {sessionId}
+                </div>
+              )}
             </div>
             <div className="chat-input-bar">
               <input
@@ -398,31 +451,16 @@ export default function ChatPage() {
               {chatLoading ? (
                 <button onClick={handleStop} className="btn-stop">
                   <Square size={14} />
-                  停止
+                  {t("停止")}
                 </button>
               ) : (
                 <button onClick={onSendChat} disabled={!canSend}>
                   <Send size={16} />
-                  发送
+                  {t("发送")}
                 </button>
               )}
             </div>
           </div>
-
-          {sessionId && (
-            <div className="chat-session-label">
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "var(--success)",
-                  display: "inline-block",
-                }}
-              />
-              Session: {sessionId}
-            </div>
-          )}
         </div>
       </div>
     </div>

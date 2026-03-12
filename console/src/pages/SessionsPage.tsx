@@ -15,6 +15,7 @@ import {
   getSessionDetail,
   getSessionsByAgent,
 } from "../api";
+import { useI18n } from "../i18n";
 import type { SessionItem } from "../types";
 import {
   Badge,
@@ -35,6 +36,7 @@ function formatTs(ts?: number): string {
 
 export default function SessionsPage() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
   const [activeAgent, setActiveAgent] = useState<string>("all");
@@ -67,66 +69,90 @@ export default function SessionsPage() {
     void onLoad();
   }, [activeAgent]);
 
-  async function onOpen(sessionId: string) {
+  async function onOpen(session: SessionItem) {
+    const targetAgentId =
+      activeAgent === "all"
+        ? session.agent_id
+        : activeAgent || session.agent_id;
     setSelected(
-      await getSessionDetail(
-        sessionId,
-        activeAgent === "all" ? undefined : activeAgent,
-      ),
+      await getSessionDetail(session.session_id, targetAgentId || undefined),
     );
   }
 
-  async function onDelete(sessionId: string) {
-    if (!window.confirm(`确认删除会话 ${sessionId.slice(0, 8)} 吗？`)) return;
-    await deleteSession(
-      sessionId,
-      activeAgent === "all" ? undefined : activeAgent,
-    );
+  async function onDelete(session: SessionItem) {
+    const sessionId = session.session_id;
+    const targetAgentId =
+      activeAgent === "all"
+        ? session.agent_id
+        : activeAgent || session.agent_id;
+    if (
+      !window.confirm(
+        t("确认删除会话 {id} 吗？", { id: sessionId.slice(0, 8) }),
+      )
+    ) {
+      return;
+    }
+    await deleteSession(sessionId, targetAgentId || undefined);
     if (selected?.session_id === sessionId) {
       setSelected(null);
     }
     await onLoad();
   }
 
-  function onContinue(sessionId: string) {
-    navigate(`/chat?session_id=${encodeURIComponent(sessionId)}`);
+  function onContinue(session: SessionItem) {
+    const query = new URLSearchParams();
+    query.set("session_id", session.session_id);
+    if (session.agent_id) {
+      query.set("agent_id", session.agent_id);
+    }
+    navigate(`/chat?${query.toString()}`);
   }
 
   return (
     <div className="panel">
       <PageHeader
         eyebrow="Conversation Archive"
-        title="会话管理"
-        description="按 Agent 查看历史会话，快速恢复研究线程并继续推进当前任务。"
+        title={t("会话管理")}
+        description={t(
+          "按 Agent 查看历史会话，快速恢复研究线程并继续推进当前任务。",
+        )}
         meta={
           <div className="page-header-meta-row">
-            <MetricPill label="会话数" value={sessions.length} />
+            <MetricPill label={t("会话数")} value={sessions.length} />
             <MetricPill label="Agent 视图" value={activeAgent} />
-            <MetricPill label="可选 Agent" value={agents.length} />
+            <MetricPill label={t("可选 Agent")} value={agents.length} />
           </div>
         }
         actions={
-          <div className="toolbar-row">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索标题 / session id / agent"
-            />
-            <select
-              value={activeAgent}
-              onChange={(e) => setActiveAgent(e.target.value)}
-            >
-              <option value="all">全部 Agent</option>
-              {agents.map((agent) => (
-                <option key={String(agent.id)} value={String(agent.id)}>
-                  {String(agent.id)}
-                </option>
-              ))}
-            </select>
-            <button onClick={onLoad}>
-              <RefreshCw size={15} />
-              刷新会话
-            </button>
+          <div className="filter-toolbar">
+            <div className="filter-field filter-field-compact">
+              <span className="filter-field-label">Agent</span>
+              <select
+                value={activeAgent}
+                onChange={(e) => setActiveAgent(e.target.value)}
+              >
+                <option value="all">全部 Agent</option>
+                {agents.map((agent) => (
+                  <option key={String(agent.id)} value={String(agent.id)}>
+                    {String(agent.id)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-field filter-field-grow">
+              <span className="filter-field-label">搜索</span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索标题 / session id / agent"
+              />
+            </div>
+            <div className="filter-toolbar-actions">
+              <button onClick={onLoad}>
+                <RefreshCw size={15} />
+                刷新会话
+              </button>
+            </div>
           </div>
         }
       />
@@ -134,12 +160,12 @@ export default function SessionsPage() {
       {!loaded && sessions.length === 0 && (
         <EmptyState
           icon={<MessageCircle size={28} />}
-          title="加载会话列表"
-          description="查看和管理所有 Agent 交互会话"
+          title={t("加载会话列表")}
+          description={t("查看和管理所有 Agent 交互会话")}
           action={
             <button onClick={onLoad}>
               <RefreshCw size={15} />
-              加载
+              {t("加载")}
             </button>
           }
         />
@@ -147,17 +173,24 @@ export default function SessionsPage() {
 
       {loaded && query.trim() && (
         <NoticeBanner variant="info">
-          当前筛选结果 {filteredSessions.length} / {sessions.length}
+          {t("当前筛选结果 {filtered} / {total}", {
+            filtered: filteredSessions.length,
+            total: sessions.length,
+          })}
         </NoticeBanner>
       )}
 
       <SurfaceCard
-        title="会话列表"
-        description="可以直接查看详情、继续对话，或者按 Agent 范围清理历史会话。"
+        title={t("会话列表")}
+        description={t(
+          "可以直接查看详情、继续对话，或者按 Agent 范围清理历史会话。",
+        )}
       >
         <div className="card-list animate-list">
           {filteredSessions.length === 0 && (
-            <div className="empty-inline">当前筛选条件下没有匹配会话</div>
+            <div className="empty-inline">
+              {t("当前筛选条件下没有匹配会话")}
+            </div>
           )}
           {filteredSessions.map((session: SessionItem) => (
             <div key={session.session_id} className="data-row">
@@ -176,7 +209,9 @@ export default function SessionsPage() {
                     size={11}
                     style={{ marginRight: 2, verticalAlign: "middle" }}
                   />
-                  {session.message_count ?? 0} 条消息
+                  {t("{count} 条消息", {
+                    count: session.message_count ?? 0,
+                  })}
                 </div>
               </div>
               <div className="data-row-actions">
@@ -187,21 +222,18 @@ export default function SessionsPage() {
                 </Badge>
                 <button
                   className="btn-sm btn-secondary"
-                  onClick={() => onOpen(session.session_id)}
+                  onClick={() => onOpen(session)}
                 >
                   <Eye size={14} />
                   查看
                 </button>
-                <button
-                  className="btn-sm"
-                  onClick={() => onContinue(session.session_id)}
-                >
+                <button className="btn-sm" onClick={() => onContinue(session)}>
                   <PlayCircle size={14} />
                   继续对话
                 </button>
                 <button
                   className="btn-sm danger"
-                  onClick={() => onDelete(session.session_id)}
+                  onClick={() => onDelete(session)}
                 >
                   <Trash2 size={14} />
                   删除

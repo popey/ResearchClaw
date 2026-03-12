@@ -29,6 +29,7 @@ import {
   StatCard,
   SurfaceCard,
 } from "../components/ui";
+import { useI18n } from "../i18n";
 
 type OverviewState = {
   health: string;
@@ -40,6 +41,7 @@ type OverviewState = {
 };
 
 export default function StatusPage() {
+  const { t } = useI18n();
   const [overview, setOverview] = useState<OverviewState>({
     health: "unknown",
     agentName: "-",
@@ -193,32 +195,34 @@ export default function StatusPage() {
     <div className="panel">
       <PageHeader
         eyebrow="Control Plane"
-        title="系统状态"
-        description="集中查看服务健康、自动化执行、模型使用和控制面运行态。"
+        title={t("系统状态")}
+        description={t(
+          "集中查看服务健康、自动化执行、模型使用和控制面运行态。",
+        )}
         meta={
           <div className="page-header-meta-row">
             <MetricPill
               label="API"
-              value={overview.health === "ok" ? "Healthy" : overview.health}
+              value={overview.health === "ok" ? t("正常") : overview.health}
             />
             <MetricPill
               label="Agent"
               value={
                 overview.running === null
-                  ? "Unknown"
+                  ? t("未知")
                   : overview.running
-                  ? "Running"
-                  : "Stopped"
+                  ? t("运行中")
+                  : t("已停止")
               }
             />
             <MetricPill
               label="Heartbeat"
               value={
                 overview.heartbeatEnabled === null
-                  ? "Unknown"
+                  ? t("未知")
                   : overview.heartbeatEnabled
-                  ? "Enabled"
-                  : "Off"
+                  ? t("启用")
+                  : t("关闭")
               }
             />
           </div>
@@ -238,25 +242,25 @@ export default function StatusPage() {
               disabled={loading}
             >
               <Zap size={15} />
-              热重载
+              {t("热重载")}
             </button>
             <button onClick={onRefreshStatus} disabled={loading}>
               <RefreshCw size={15} className={loading ? "spinner" : ""} />
-              刷新状态
+              {t("刷新状态")}
             </button>
           </div>
         }
       />
 
       <SurfaceCard
-        title="服务总览"
-        description="先确认健康、Agent 状态和能力装载，再下钻到具体链路。"
+        title={t("服务总览")}
+        description={t("先确认健康、Agent 状态和能力装载，再下钻到具体链路。")}
         className="mb-4"
       >
         <div className="stat-row" data-no-auto-translate>
           <StatCard
-            label="API 健康"
-            value={overview.health === "ok" ? "正常" : overview.health}
+            label={t("API 健康")}
+            value={overview.health === "ok" ? t("正常") : overview.health}
             icon={
               overview.health === "ok" ? (
                 <CheckCircle2 size={20} />
@@ -273,13 +277,13 @@ export default function StatusPage() {
             variant="brand"
           />
           <StatCard
-            label="运行状态"
+            label={t("运行状态")}
             value={
               overview.running === null
-                ? "未知"
+                ? t("未知")
                 : overview.running
-                ? "运行中"
-                : "已停止"
+                ? t("运行中")
+                : t("已停止")
             }
             icon={<Activity size={20} />}
             variant={
@@ -291,14 +295,14 @@ export default function StatusPage() {
             }
           />
           <StatCard
-            label="可用工具"
-            value={overview.toolCount ?? "未知"}
+            label={t("可用工具")}
+            value={overview.toolCount ?? t("未知")}
             icon={<Wrench size={20} />}
             variant={overview.toolCount === null ? "warning" : "info"}
           />
           <StatCard
-            label="激活技能"
-            value={overview.activeSkills ?? "未知"}
+            label={t("激活技能")}
+            value={overview.activeSkills ?? t("未知")}
             icon={<Puzzle size={20} />}
             variant={overview.activeSkills === null ? "info" : "warning"}
           />
@@ -306,10 +310,10 @@ export default function StatusPage() {
             label="Heartbeat"
             value={
               overview.heartbeatEnabled === null
-                ? "未知"
+                ? t("未知")
                 : overview.heartbeatEnabled
-                ? "启用"
-                : "关闭"
+                ? t("启用")
+                : t("关闭")
             }
             icon={<Heart size={20} />}
             variant={
@@ -326,19 +330,21 @@ export default function StatusPage() {
       {control && (
         <>
           <SurfaceCard
-            title="运行时与模型"
-            description="这里反映 Agent 实例规模、模型请求量和回退链是否在工作。"
+            title={t("运行时与模型")}
+            description={t(
+              "这里反映 Agent 实例规模、模型请求量和回退链是否在工作。",
+            )}
             className="mb-4"
           >
             <div className="stat-row">
               <StatCard
-                label="运行模式"
+                label={t("运行模式")}
                 value={control.mode || "-"}
                 icon={<Zap size={20} />}
                 variant="brand"
               />
               <StatCard
-                label="运行时长"
+                label={t("运行时长")}
                 value={
                   control.uptime_seconds
                     ? `${Math.round(control.uptime_seconds)}s`
@@ -348,7 +354,7 @@ export default function StatusPage() {
                 variant="info"
               />
               <StatCard
-                label="定时任务"
+                label={t("定时任务")}
                 value={
                   Array.isArray(control.cron_jobs)
                     ? control.cron_jobs.length
@@ -358,7 +364,7 @@ export default function StatusPage() {
                 variant="warning"
               />
               <StatCard
-                label="Agent 实例"
+                label={t("Agent 实例")}
                 value={
                   Array.isArray(control?.runtime?.runner?.agents)
                     ? control.runtime.runner.agents.length
@@ -368,13 +374,13 @@ export default function StatusPage() {
                 variant="info"
               />
               <StatCard
-                label="模型请求数"
+                label={t("模型请求数")}
                 value={control?.runtime?.runner?.usage?.requests ?? 0}
                 icon={<Activity size={20} />}
                 variant="brand"
               />
               <StatCard
-                label="回退次数"
+                label={t("回退次数")}
                 value={control?.runtime?.runner?.usage?.fallbacks ?? 0}
                 icon={<RefreshCw size={20} />}
                 variant="warning"
@@ -383,36 +389,36 @@ export default function StatusPage() {
           </SurfaceCard>
 
           <SurfaceCard
-            title="渠道与自动化"
-            description="重点关注入口接入量、队列积压和自动化执行结果。"
+            title={t("渠道与自动化")}
+            description={t("重点关注入口接入量、队列积压和自动化执行结果。")}
           >
             <div className="stat-row">
               <StatCard
-                label="注册频道"
+                label={t("注册频道")}
                 value={control?.runtime?.channels?.registered_channels ?? 0}
                 icon={<Workflow size={20} />}
                 variant="brand"
               />
               <StatCard
-                label="通道队列消息"
+                label={t("通道队列消息")}
                 value={control?.runtime?.channels?.queued_messages ?? 0}
                 icon={<MessageSquareMore size={20} />}
                 variant="info"
               />
               <StatCard
-                label="处理中会话键"
+                label={t("处理中会话键")}
                 value={control?.runtime?.channels?.in_progress_keys ?? 0}
                 icon={<Activity size={20} />}
                 variant="warning"
               />
               <StatCard
-                label="自动化触发成功"
+                label={t("自动化触发成功")}
                 value={control?.runtime?.automation?.succeeded ?? 0}
                 icon={<CheckCircle2 size={20} />}
                 variant="success"
               />
               <StatCard
-                label="自动化触发失败"
+                label={t("自动化触发失败")}
                 value={control?.runtime?.automation?.failed ?? 0}
                 icon={<AlertTriangle size={20} />}
                 variant="danger"
@@ -423,12 +429,18 @@ export default function StatusPage() {
       )}
 
       <SurfaceCard
-        title="运行日志"
-        description="最近 80 行，适合快速判断热重载、自动化和渠道是否有异常。"
+        title={t("运行日志")}
+        description={t(
+          "最近 80 行，适合快速判断热重载、自动化和渠道是否有异常。",
+        )}
         className="terminal-card"
       >
-        <pre className="pre" style={{ maxHeight: 320, overflow: "auto" }}>
-          {logTail || "暂无日志"}
+        <pre
+          className="pre"
+          style={{ maxHeight: 320, overflow: "auto" }}
+          data-no-auto-translate
+        >
+          {logTail || t("暂无日志")}
         </pre>
       </SurfaceCard>
     </div>

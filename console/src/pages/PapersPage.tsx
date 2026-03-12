@@ -2,10 +2,12 @@ import { useState } from "react";
 import type { ChangeEvent } from "react";
 import { Search, FileText, Calendar, Users, ExternalLink } from "lucide-react";
 import { searchArxiv } from "../api";
+import { useI18n } from "../i18n";
 import type { PaperItem } from "../types";
 import { PageHeader, EmptyState } from "../components/ui";
 
 export default function PapersPage() {
+  const { t } = useI18n();
   const [paperQuery, setPaperQuery] = useState(
     "large language model reasoning",
   );
@@ -21,7 +23,7 @@ export default function PapersPage() {
       const result = await searchArxiv(paperQuery);
       setPapers(result);
     } catch (error) {
-      setPapers([{ title: `检索失败: ${String(error)}` }]);
+      setPapers([{ title: t("检索失败: {error}", { error: String(error) }) }]);
     } finally {
       setPaperLoading(false);
     }
@@ -30,8 +32,8 @@ export default function PapersPage() {
   return (
     <div className="panel">
       <PageHeader
-        title="论文检索"
-        description="从 ArXiv 搜索最新学术论文，快速了解研究动态"
+        title={t("论文检索")}
+        description={t("从 ArXiv 搜索最新学术论文，快速了解研究动态")}
       />
 
       <div className="search-bar">
@@ -40,30 +42,30 @@ export default function PapersPage() {
           onChange={(e: ChangeEvent<HTMLInputElement>) =>
             setPaperQuery(e.target.value)
           }
-          placeholder="输入研究主题关键词..."
+          placeholder={t("输入研究主题关键词...")}
           onKeyDown={(e) => {
             if (e.key === "Enter") onSearchPapers();
           }}
         />
         <button onClick={onSearchPapers} disabled={paperLoading}>
           <Search size={15} />
-          {paperLoading ? "检索中..." : "检索 ArXiv"}
+          {paperLoading ? t("检索中...") : t("检索 ArXiv")}
         </button>
       </div>
 
       {!hasSearched && papers.length === 0 && (
         <EmptyState
           icon={<FileText size={28} />}
-          title="搜索学术论文"
-          description="输入主题或关键词，从 ArXiv 获取相关研究论文"
+          title={t("搜索学术论文")}
+          description={t("输入主题或关键词，从 ArXiv 获取相关研究论文")}
         />
       )}
 
       {hasSearched && papers.length === 0 && !paperLoading && (
         <EmptyState
           icon={<Search size={28} />}
-          title="未找到相关论文"
-          description="请尝试使用不同的关键词进行搜索"
+          title={t("未找到相关论文")}
+          description={t("请尝试使用不同的关键词进行搜索")}
         />
       )}
 
@@ -87,14 +89,14 @@ export default function PapersPage() {
               {paper.authors && paper.authors.length > 0 && (
                 <span className="paper-meta-item">
                   <Users size={12} />
-                  {paper.authors.length} 位作者
+                  {t("{count} 位作者", { count: paper.authors.length })}
                 </span>
               )}
             </div>
             {paper.authors && paper.authors.length > 0 && (
               <p className="text-xs muted mt-2">
                 {paper.authors.slice(0, 5).join(", ")}
-                {paper.authors.length > 5 && " 等"}
+                {paper.authors.length > 5 && t("等")}
               </p>
             )}
             {paper.summary && (

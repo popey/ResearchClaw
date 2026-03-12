@@ -12,6 +12,7 @@ export type Locale = "zh" | "en";
 const STORAGE_KEY = "researchclaw.console.locale";
 
 const EN_DICT: Record<string, string> = {
+  "让重复退场，让创造登场。": "Retire repetition. Let creation take the stage.",
   研究: "Research",
   控制: "Control",
   智能体: "Agent",
@@ -30,6 +31,11 @@ const EN_DICT: Record<string, string> = {
   环境变量: "Environment Variables",
   "ResearchClaw 运行中": "ResearchClaw Running",
   刷新: "Refresh",
+  语言: "Language",
+  中文: "Chinese",
+  切换语言: "Switch language",
+  打开导航: "Open navigation",
+  关闭导航: "Close navigation",
   加载: "Load",
   新建任务: "New Job",
   新对话: "New Chat",
@@ -43,6 +49,8 @@ const EN_DICT: Record<string, string> = {
   停止: "Stop",
   发送: "Send",
   "运行中...": "Running...",
+  推理中: "Reasoning",
+  可交互: "Interactive",
   "保存中...": "Saving...",
   "删除中...": "Deleting...",
   "应用中...": "Applying...",
@@ -92,6 +100,10 @@ const EN_DICT: Record<string, string> = {
   开始一段研究对话: "Start a Research Conversation",
   暂无历史会话: "No Chat History",
   "当前会话: ": "Current Session: ",
+  历史会话: "History",
+  当前模式: "Mode",
+  最近更新: "Updated",
+  研究线程: "Research Threads",
   未创建: "Not Created",
   思考过程: "Reasoning",
   "正在思考...": "Thinking...",
@@ -103,6 +115,8 @@ const EN_DICT: Record<string, string> = {
   请选择文件: "Please select a file",
   "加载文件中...": "Loading file...",
   对话: "Chat",
+  趋势梳理: "Trend Scan",
+  实验计划: "Experiment Plan",
   配置: "Config",
   "对话 / 技能 / 定时 / 心跳 关系":
     "Chat / Skills / Schedules / Heartbeat Relations",
@@ -124,6 +138,26 @@ const EN_DICT: Record<string, string> = {
   "检索 ArXiv": "Search ArXiv",
   未找到相关论文: "No relevant papers found",
   搜索学术论文: "Search Academic Papers",
+  当前筛选条件下没有匹配频道: "No channels match the current filters",
+  当前筛选条件下没有匹配目录项: "No catalog entries match the current filters",
+  当前筛选条件下没有匹配插件: "No plugins match the current filters",
+  当前筛选条件下没有匹配文件: "No files match the current filters",
+  当前筛选条件下没有匹配技能: "No skills match the current filters",
+  当前筛选条件下没有匹配任务: "No jobs match the current filters",
+  当前筛选条件下没有匹配供应商: "No providers match the current filters",
+  当前筛选条件下没有匹配会话: "No sessions match the current filters",
+  "当前筛选结果 {filtered} / {total}": "Filtered results {filtered} / {total}",
+  会话数: "Sessions",
+  "可选 Agent": "Available Agents",
+  "查看和管理所有 Agent 交互会话":
+    "View and manage all agent interaction sessions",
+  "确认删除会话 {id} 吗？": 'Are you sure you want to delete session "{id}"?',
+  "按 Agent 查看历史会话，快速恢复研究线程并继续推进当前任务。":
+    "Browse session history by agent, resume research threads quickly, and continue the current task.",
+  "可以直接查看详情、继续对话，或者按 Agent 范围清理历史会话。":
+    "View details, continue the conversation, or clear session history by agent.",
+  "{count} 条": "{count} messages",
+  "{count} 条消息": "{count} messages",
   "MCP 客户端": "MCP Clients",
   新增客户端: "New Client",
   "加载 MCP 客户端": "Loading MCP Clients",
@@ -147,6 +181,126 @@ const EN_DICT: Record<string, string> = {
   检测系统心跳: "Check Heartbeat",
   "网络连接失败：请确认后端服务可用并检查浏览器网络/代理设置。":
     "Network error: please ensure backend service is running and check browser network/proxy settings.",
+  "从 ArXiv 搜索最新学术论文，快速了解研究动态":
+    "Search the latest papers from ArXiv and get up to speed on current research quickly.",
+  "输入主题或关键词，从 ArXiv 获取相关研究论文":
+    "Enter a topic or keywords to fetch relevant papers from ArXiv.",
+  "输入研究主题关键词...": "Enter research topic keywords...",
+  请尝试使用不同的关键词进行搜索:
+    "Try searching with a different set of keywords.",
+  "检索失败: {error}": "Search failed: {error}",
+  "{count} 位作者": "{count} authors",
+  等: "et al.",
+  "集中查看服务健康、自动化执行、模型使用和控制面运行态。":
+    "Inspect service health, automation runs, model usage, and control-plane runtime in one place.",
+  热重载: "Hot Reload",
+  服务总览: "Service Overview",
+  "先确认健康、Agent 状态和能力装载，再下钻到具体链路。":
+    "Confirm health, agent status, and loaded capabilities first, then drill into specific pipelines.",
+  未知: "Unknown",
+  运行时与模型: "Runtime & Models",
+  "这里反映 Agent 实例规模、模型请求量和回退链是否在工作。":
+    "This reflects agent instance scale, model request volume, and whether the fallback chain is working.",
+  "Agent 实例": "Agent Instances",
+  模型请求数: "Model Requests",
+  回退次数: "Fallback Count",
+  渠道与自动化: "Channels & Automation",
+  "重点关注入口接入量、队列积压和自动化执行结果。":
+    "Focus on ingress coverage, queue backlog, and automation execution results.",
+  注册频道: "Registered Channels",
+  通道队列消息: "Queued Messages",
+  处理中会话键: "In-Progress Keys",
+  自动化触发成功: "Automation Success",
+  自动化触发失败: "Automation Failures",
+  运行日志: "Runtime Logs",
+  "最近 80 行，适合快速判断热重载、自动化和渠道是否有异常。":
+    "Last 80 lines, useful for quickly checking hot reload, automation, and channel issues.",
+  暂无日志: "No logs yet",
+  "把内建频道、自定义插件、账号映射和路由绑定放在同一控制面里管理。":
+    "Manage built-in channels, custom plugins, account mappings, and routing bindings in one control surface.",
+  已注册: "Registered",
+  目录总数: "Catalog Entries",
+  自定义插件: "Custom Plugins",
+  已注册频道: "Registered Channels",
+  "运行时真正可用的入口，适合先看状态和类型。":
+    "These are the actual runtime entry points; start here to inspect status and type.",
+  "当前实例已经注册到运行时消息分发链路。":
+    "The current instance is registered with the runtime message dispatch pipeline.",
+  频道目录: "Channel Catalog",
+  "内建与外部插件的统一目录，方便确认装载来源。":
+    "A unified catalog for built-in and external plugins, useful for verifying load sources.",
+  安装自定义频道: "Install Custom Channel",
+  "可从本地路径或远程 URL 安装/更新，适合接 webhook、企业 IM 或自定义消息入口。":
+    "Install or update from a local path or remote URL, suitable for webhooks, enterprise IM, or custom message ingress.",
+  "安装/更新插件": "Install / Update Plugin",
+  暂无自定义插件: "No custom plugins",
+  账号与绑定配置: "Accounts & Bindings",
+  "账号实例和 bindings 直接影响消息路由，保存后会热重载到运行时。":
+    "Account instances and bindings directly affect message routing and hot-reload into runtime after saving.",
+  保存并热重载: "Save & Hot Reload",
+  "Agent 视图": "Agent View",
+  "全部 Agent": "All Agents",
+  搜索: "Search",
+  会话列表: "Session List",
+  "管理周期性执行的自动化任务，覆盖编辑、删除、立即执行、通道设置和运行时限制。":
+    "Manage recurring automation jobs, including edit, delete, run-now, channel settings, and runtime limits.",
+  任务数: "Jobs",
+  启用中: "Enabled",
+  可用通道: "Available Channels",
+  状态: "Status",
+  全部状态: "All Statuses",
+  任务列表: "Job List",
+  "建议把高价值、可重复的研究流程沉淀为定时任务，并明确通道和目标会话。":
+    "Turn high-value, repeatable research workflows into scheduled jobs, with explicit channels and target sessions.",
+  "查看心跳任务的当前配置与运行状态，确认系统是否会按周期自动唤醒。":
+    "Inspect the current heartbeat configuration and runtime status to confirm periodic wake-ups are active.",
+  频率: "Frequency",
+  "Heartbeat 配置": "Heartbeat Config",
+  "当前返回的是运行时心跳配置的原始结构，适合排查调度目标与参数。":
+    "This returns the raw runtime heartbeat config, useful for troubleshooting scheduling targets and parameters.",
+  "集中查看并编辑关键运行文件，把配置、技能、心跳、定时和记忆内容维持在同一工作区里。":
+    "Inspect and edit key runtime files in one workspace, keeping config, skills, heartbeat, schedules, and memory together.",
+  当前文件: "Current File",
+  编辑状态: "Edit Status",
+  工作区关系图: "Workspace Map",
+  "帮助你快速确认会话、技能、定时任务、心跳和配置之间的连接关系。":
+    "Helps you quickly confirm relationships among sessions, skills, scheduled jobs, heartbeat, and config.",
+  "按分类快速切换，适合维护 `config.json`、`AGENTS.md` 等核心文件。":
+    "Switch by category quickly, ideal for maintaining core files such as `config.json` and `AGENTS.md`.",
+  "启用或禁用 Agent 技能，同时影响聊天和 `task_type=agent` 的定时任务。":
+    "Enable or disable agent skills, affecting both chat and `task_type=agent` scheduled jobs.",
+  技能总数: "Skills",
+  技能开关: "Skill Toggles",
+  "建议只启用你当前需要的能力，避免让 Agent 在低价值技能上分散注意力。":
+    "Enable only the capabilities you need right now, so the agent does not get distracted by low-value skills.",
+  "把高频运行参数放在一处调优，平衡推理深度、上下文长度和交互速度。":
+    "Tune high-frequency runtime parameters in one place to balance reasoning depth, context length, and interaction speed.",
+  最大迭代: "Max Iterations",
+  上下文上限: "Context Limit",
+  推理步数: "Reasoning Steps",
+  "适合控制任务深度。数值越高，复杂任务成功率更高，但成本和时延也会上升。":
+    "Useful for controlling task depth. Higher values improve complex task success rates, but increase cost and latency.",
+  "Agent 单次任务的最大推理步数":
+    "Maximum reasoning steps allowed for a single agent task",
+  上下文容量: "Context Capacity",
+  "适合控制单次任务能容纳的上下文长度，直接影响长论文和长工具输出的可处理范围。":
+    "Useful for controlling how much context a single task can hold, directly affecting long papers and long tool outputs.",
+  "单次输入的最大 token 数量": "Maximum tokens allowed for a single input",
+  "一个供应商卡片对应一个平台入口，可挂多个模型，并直接应用到当前 Agent 运行配置。":
+    "Each provider card represents one platform endpoint, can host multiple models, and can be applied directly to the current agent runtime config.",
+  供应商: "Providers",
+  可发现模型: "Discoverable Models",
+  供应商列表: "Provider List",
+  "启用仅代表该入口可用；“应用”会把当前入口写入 Agent 的活动模型配置。":
+    'Enabled only means the endpoint is available; "Apply" writes the current endpoint into the agent\'s active model config.',
+  "管理 API 密钥和环境配置参数":
+    "Manage API keys and environment configuration parameters",
+  "管理 Model Context Protocol 客户端连接":
+    "Manage Model Context Protocol client connections",
+  "Cron: {cron} ({timezone})": "Cron: {cron} ({timezone})",
+  "类型: {taskType}": "Type: {taskType}",
+  "目标: {user}/{session}": "Target: {user}/{session}",
+  "模式: {mode}": "Mode: {mode}",
   "流式连接超时：后端响应过慢或网络不稳定。":
     "Stream timeout: backend is slow or network is unstable.",
   "流式连接中断：长时间未收到数据，请重试。":
