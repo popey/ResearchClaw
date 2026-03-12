@@ -202,7 +202,12 @@ def test_multi_agent_usage_stats_aggregate(monkeypatch):
 
 def test_multi_agent_running_reflects_any_running_agent(monkeypatch):
     monkeypatch.setattr(mm, "AgentRunnerManager", _FakeAgentRunnerManager)
-    cfg = {"agents": {"defaults": {"default_agent_id": "main"}, "list": [{"id": "main"}, {"id": "lab"}]}}
+    cfg = {
+        "agents": {
+            "defaults": {"default_agent_id": "main"},
+            "list": [{"id": "main"}, {"id": "lab"}],
+        },
+    }
     manager = mm.MultiAgentRunnerManager(config_loader=lambda: cfg)
     asyncio.run(manager.reload_from_config())
 
@@ -213,12 +218,19 @@ def test_multi_agent_running_reflects_any_running_agent(monkeypatch):
 
 def test_multi_agent_status_snapshot_prefers_running_agent(monkeypatch):
     monkeypatch.setattr(mm, "AgentRunnerManager", _FakeAgentRunnerManager)
-    cfg = {"agents": {"defaults": {"default_agent_id": "main"}, "list": [{"id": "main"}, {"id": "lab"}]}}
+    cfg = {
+        "agents": {
+            "defaults": {"default_agent_id": "main"},
+            "list": [{"id": "main"}, {"id": "lab"}],
+        },
+    }
     manager = mm.MultiAgentRunnerManager(config_loader=lambda: cfg)
     asyncio.run(manager.reload_from_config())
 
     manager._agents["lab"].is_running = True  # noqa: SLF001
-    manager._agents["lab"].agent = SimpleNamespace(tool_names=["search"])  # noqa: SLF001
+    manager._agents["lab"].agent = SimpleNamespace(
+        tool_names=["search"],
+    )  # noqa: SLF001
 
     snapshot = manager.get_status_snapshot()
 

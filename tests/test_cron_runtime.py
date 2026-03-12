@@ -64,7 +64,10 @@ def test_cron_executor_raises_on_failed_response_event() -> None:
         async def send_event(self, **kwargs):
             del kwargs
 
-    executor = CronExecutor(runner=_Runner(), channel_manager=_ChannelManager())
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
 
     async def _run() -> None:
         await executor.execute(_build_agent_job())
@@ -96,7 +99,9 @@ def test_cron_manager_tracks_pending_and_running_state() -> None:
         first = asyncio.create_task(manager._execute_once(job))  # noqa: SLF001
         await started.wait()
 
-        second = asyncio.create_task(manager._execute_once(job))  # noqa: SLF001
+        second = asyncio.create_task(
+            manager._execute_once(job),
+        )  # noqa: SLF001
         await asyncio.sleep(0)
 
         state = manager.get_state(job.id)
@@ -129,7 +134,11 @@ def test_cron_manager_stop_job_cancels_running_execution() -> None:
         async def get_job(self, job_id):
             return _build_agent_job(job_id=job_id)
 
-    manager = CronManager(repo=_Repo(), runner=object(), channel_manager=object())
+    manager = CronManager(
+        repo=_Repo(),
+        runner=object(),
+        channel_manager=object(),
+    )
     manager._executor = _Executor()  # noqa: SLF001
 
     job = _build_agent_job(job_id="job-stop", timeout_seconds=30)

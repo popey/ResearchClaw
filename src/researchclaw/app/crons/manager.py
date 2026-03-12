@@ -377,9 +377,7 @@ class CronManager:
             raise KeyError(f"Job not found: {job_id}")
 
         tasks = [
-            task
-            for task in self._tasks.get(job_id, set())
-            if not task.done()
+            task for task in self._tasks.get(job_id, set()) if not task.done()
         ]
         for task in tasks:
             task.cancel()

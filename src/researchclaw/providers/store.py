@@ -72,9 +72,7 @@ def _resolve_store_path(
     default_path: Path,
 ) -> Path:
     return (
-        Path(file_path).expanduser().resolve()
-        if file_path
-        else default_path
+        Path(file_path).expanduser().resolve() if file_path else default_path
     )
 
 

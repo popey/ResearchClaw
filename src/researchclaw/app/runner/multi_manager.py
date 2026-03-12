@@ -126,7 +126,10 @@ class MultiAgentRunnerManager:
         if self._mcp_manager is not None:
             manager.set_mcp_manager(self._mcp_manager)
 
-    def _create_manager(self, definition: AgentDefinition) -> AgentRunnerManager:
+    def _create_manager(
+        self,
+        definition: AgentDefinition,
+    ) -> AgentRunnerManager:
         manager = AgentRunnerManager(
             working_dir=definition.workspace,
             model_config=definition.model_config,
@@ -393,7 +396,11 @@ class MultiAgentRunnerManager:
                     session_count = 0
                 try:
                     tool_count = len(
-                        getattr(getattr(manager, "agent", None), "tool_names", [])
+                        getattr(
+                            getattr(manager, "agent", None),
+                            "tool_names",
+                            [],
+                        )
                         or [],
                     )
                 except Exception:

@@ -366,7 +366,11 @@ def _get_runner_runtime_stats(runner: Any) -> dict[str, Any]:
         try:
             _, manager = runner.get_status_manager()
             if manager is not None:
-                runner_for_status = getattr(manager, "runner", runner_for_status)
+                runner_for_status = getattr(
+                    manager,
+                    "runner",
+                    runner_for_status,
+                )
         except Exception:
             runner_for_status = getattr(runner, "runner", None)
     try:

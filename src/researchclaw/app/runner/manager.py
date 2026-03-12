@@ -305,7 +305,10 @@ class AgentRunnerManager:
         return out
 
     @staticmethod
-    def _provider_usage_defaults(provider: str, model_name: str) -> dict[str, Any]:
+    def _provider_usage_defaults(
+        provider: str,
+        model_name: str,
+    ) -> dict[str, Any]:
         return {
             "provider": provider or "",
             "model_name": model_name or "",

@@ -15,7 +15,9 @@ def test_agent_status_prefers_runner_snapshot() -> None:
         "agents": [{"id": "lab", "running": True}],
     }
     runner = SimpleNamespace(get_status_snapshot=lambda: snapshot)
-    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(runner=runner)))
+    req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(runner=runner)),
+    )
 
     result = asyncio.run(agent_router.agent_status(req))
 
@@ -27,7 +29,9 @@ def test_list_tools_prefers_runner_snapshot() -> None:
         get_status_snapshot=lambda: {"tool_names": ["search", "read"]},
         agent=None,
     )
-    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(runner=runner)))
+    req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(runner=runner)),
+    )
 
     result = asyncio.run(agent_router.list_tools(req))
 
