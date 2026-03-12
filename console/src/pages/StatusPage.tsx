@@ -30,67 +30,164 @@ import {
   SurfaceCard,
 } from "../components/ui";
 
+type OverviewState = {
+  health: string;
+  agentName: string;
+  running: boolean | null;
+  toolCount: number | null;
+  activeSkills: number | null;
+  heartbeatEnabled: boolean | null;
+};
+
 export default function StatusPage() {
-  const [health, setHealth] = useState<string>("unknown");
-  const [agentName, setAgentName] = useState<string>("-");
-  const [running, setRunning] = useState<boolean>(false);
-  const [toolCount, setToolCount] = useState<number>(0);
-  const [activeSkills, setActiveSkills] = useState<number>(0);
-  const [heartbeatEnabled, setHeartbeatEnabled] = useState<boolean>(false);
+  const [overview, setOverview] = useState<OverviewState>({
+    health: "unknown",
+    agentName: "-",
+    running: null,
+    toolCount: null,
+    activeSkills: null,
+    heartbeatEnabled: null,
+  });
   const [control, setControl] = useState<any>(null);
   const [logTail, setLogTail] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   async function onRefreshStatus() {
     setLoading(true);
-    try {
-      const h = await getHealth();
-      setHealth(h.status);
-    } catch {
-      setHealth("down");
-    }
+    const [
+      controlResult,
+      statusResult,
+      healthResult,
+      logsResult,
+      activeSkillsResult,
+      heartbeatResult,
+    ] = await Promise.allSettled([
+      getControlStatus(),
+      getStatus(),
+      getHealth(),
+      getControlLogs(80),
+      listActiveSkills(),
+      getHeartbeat(),
+    ]);
 
-    try {
-      const s = await getStatus();
-      setAgentName(s.agent_name);
-      setRunning(s.running);
-      setToolCount(s.tool_count);
-    } catch {
-      setAgentName("error");
-    }
+    const controlData =
+      controlResult.status === "fulfilled" ? controlResult.value : null;
+    const statusData =
+      statusResult.status === "fulfilled" ? statusResult.value : null;
+    const runnerAgents = Array.isArray(controlData?.runtime?.runner?.agents)
+      ? controlData.runtime.runner.agents
+      : [];
+    const displayAgent =
+      runnerAgents.find((item: any) => item?.default) ||
+      runnerAgents.find((item: any) => item?.running) ||
+      runnerAgents[0] ||
+      null;
+    const runningFromControl =
+      typeof controlData?.runner_running === "boolean"
+        ? controlData.runner_running
+        : typeof controlData?.runtime?.runner?.running === "boolean"
+        ? controlData.runtime.runner.running
+        : null;
+    const activeSkillsFromControl = controlData?.runtime?.skills?.active_count;
+    const activeSkillsFromApi =
+      activeSkillsResult.status === "fulfilled"
+        ? activeSkillsResult.value.length
+        : null;
+    const heartbeatFromControl = controlData?.runtime?.heartbeat || null;
+    const heartbeatFromApi =
+      heartbeatResult.status === "fulfilled" ? heartbeatResult.value : null;
 
-    try {
-      setControl(await getControlStatus());
-    } catch {
-      setControl(null);
-    }
-
-    try {
-      const logs = await getControlLogs(80);
-      setLogTail(String(logs?.content || ""));
-    } catch {
-      setLogTail("");
-    }
-
-    try {
-      const active = await listActiveSkills();
-      setActiveSkills(active.length);
-    } catch {
-      setActiveSkills(0);
-    }
-
-    try {
-      const hb = await getHeartbeat();
-      setHeartbeatEnabled(Boolean(hb?.enabled));
-    } catch {
-      setHeartbeatEnabled(false);
-    }
+    setControl(controlData);
+    setOverview({
+      health:
+        healthResult.status === "fulfilled"
+          ? healthResult.value.status
+          : controlData || statusData
+          ? "ok"
+          : "down",
+      agentName: String(
+        controlData?.runtime?.runner?.agent_name ||
+          statusData?.agent_name ||
+          displayAgent?.id ||
+          controlData?.runtime?.runner?.default_agent_id ||
+          "-",
+      ),
+      running:
+        typeof runningFromControl === "boolean"
+          ? runningFromControl
+          : statusData
+          ? Boolean(statusData.running)
+          : null,
+      toolCount:
+        statusData?.tool_count != null ||
+        controlData?.runtime?.runner?.tool_count != null ||
+        displayAgent?.tool_count != null
+          ? Number(
+              controlData?.runtime?.runner?.tool_count ??
+                statusData?.tool_count ??
+                displayAgent?.tool_count ??
+                0,
+            )
+          : null,
+      activeSkills:
+        activeSkillsFromControl != null
+          ? Number(activeSkillsFromControl)
+          : activeSkillsFromApi,
+      heartbeatEnabled:
+        typeof heartbeatFromControl?.enabled === "boolean"
+          ? Boolean(heartbeatFromControl.enabled)
+          : typeof heartbeatFromApi?.enabled === "boolean"
+          ? Boolean(heartbeatFromApi.enabled)
+          : null,
+    });
+    setLogTail(
+      logsResult.status === "fulfilled"
+        ? String(logsResult.value?.content || "")
+        : "",
+    );
     setLoading(false);
   }
 
   useEffect(() => {
     void onRefreshStatus();
   }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void onRefreshStatus();
+    }, 10000);
+
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") {
+        void onRefreshStatus();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
+  }, []);
+
+  useEffect(() => {
+    const shouldRetry =
+      overview.health !== "ok" ||
+      overview.running === null ||
+      overview.toolCount === null ||
+      overview.activeSkills === null ||
+      overview.heartbeatEnabled === null;
+
+    if (!shouldRetry) {
+      return;
+    }
+
+    const retry = window.setTimeout(() => {
+      void onRefreshStatus();
+    }, 2500);
+
+    return () => window.clearTimeout(retry);
+  }, [overview]);
 
   return (
     <div className="panel">
@@ -102,12 +199,27 @@ export default function StatusPage() {
           <div className="page-header-meta-row">
             <MetricPill
               label="API"
-              value={health === "ok" ? "Healthy" : health}
+              value={overview.health === "ok" ? "Healthy" : overview.health}
             />
-            <MetricPill label="Agent" value={running ? "Running" : "Stopped"} />
+            <MetricPill
+              label="Agent"
+              value={
+                overview.running === null
+                  ? "Unknown"
+                  : overview.running
+                  ? "Running"
+                  : "Stopped"
+              }
+            />
             <MetricPill
               label="Heartbeat"
-              value={heartbeatEnabled ? "Enabled" : "Off"}
+              value={
+                overview.heartbeatEnabled === null
+                  ? "Unknown"
+                  : overview.heartbeatEnabled
+                  ? "Enabled"
+                  : "Off"
+              }
             />
           </div>
         }
@@ -141,48 +253,72 @@ export default function StatusPage() {
         description="先确认健康、Agent 状态和能力装载，再下钻到具体链路。"
         className="mb-4"
       >
-        <div className="stat-row">
+        <div className="stat-row" data-no-auto-translate>
           <StatCard
             label="API 健康"
-            value={health === "ok" ? "正常" : health}
+            value={overview.health === "ok" ? "正常" : overview.health}
             icon={
-              health === "ok" ? (
+              overview.health === "ok" ? (
                 <CheckCircle2 size={20} />
               ) : (
                 <XCircle size={20} />
               )
             }
-            variant={health === "ok" ? "success" : "danger"}
+            variant={overview.health === "ok" ? "success" : "danger"}
           />
           <StatCard
             label="Agent"
-            value={agentName}
+            value={overview.agentName}
             icon={<Bot size={20} />}
             variant="brand"
           />
           <StatCard
             label="运行状态"
-            value={running ? "运行中" : "已停止"}
+            value={
+              overview.running === null
+                ? "未知"
+                : overview.running
+                ? "运行中"
+                : "已停止"
+            }
             icon={<Activity size={20} />}
-            variant={running ? "success" : "warning"}
+            variant={
+              overview.running === null
+                ? "info"
+                : overview.running
+                ? "success"
+                : "warning"
+            }
           />
           <StatCard
             label="可用工具"
-            value={toolCount}
+            value={overview.toolCount ?? "未知"}
             icon={<Wrench size={20} />}
-            variant="info"
+            variant={overview.toolCount === null ? "warning" : "info"}
           />
           <StatCard
             label="激活技能"
-            value={activeSkills}
+            value={overview.activeSkills ?? "未知"}
             icon={<Puzzle size={20} />}
-            variant="warning"
+            variant={overview.activeSkills === null ? "info" : "warning"}
           />
           <StatCard
             label="Heartbeat"
-            value={heartbeatEnabled ? "启用" : "关闭"}
+            value={
+              overview.heartbeatEnabled === null
+                ? "未知"
+                : overview.heartbeatEnabled
+                ? "启用"
+                : "关闭"
+            }
             icon={<Heart size={20} />}
-            variant={heartbeatEnabled ? "success" : "danger"}
+            variant={
+              overview.heartbeatEnabled === null
+                ? "warning"
+                : overview.heartbeatEnabled
+                ? "success"
+                : "danger"
+            }
           />
         </div>
       </SurfaceCard>

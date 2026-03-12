@@ -304,6 +304,7 @@ function _is_skippable_text_node(node: Text): boolean {
   const tag = parent.tagName.toLowerCase();
   if (tag === "script" || tag === "style" || tag === "noscript") return true;
   if (parent.closest("textarea, input, code, pre")) return true;
+  if (parent.closest("[data-no-auto-translate]")) return true;
   if (parent.isContentEditable) return true;
   return false;
 }
@@ -318,7 +319,12 @@ function _apply_text_translations(root: HTMLElement, locale: Locale): void {
       if (!ORIGINAL_TEXT_NODES.has(node)) {
         ORIGINAL_TEXT_NODES.set(node, raw);
       }
-      const original = ORIGINAL_TEXT_NODES.get(node) ?? raw;
+      let original = ORIGINAL_TEXT_NODES.get(node) ?? raw;
+      const translatedOriginal = translateText("en", original);
+      if (raw !== original && raw !== translatedOriginal) {
+        ORIGINAL_TEXT_NODES.set(node, raw);
+        original = raw;
+      }
       const next = locale === "en" ? translateText("en", original) : original;
       if (node.nodeValue !== next) {
         node.nodeValue = next;
@@ -333,6 +339,9 @@ function _apply_attr_translations(root: HTMLElement, locale: Locale): void {
   if (!selector) return;
 
   root.querySelectorAll(selector).forEach((el) => {
+    if (el.closest("[data-no-auto-translate]")) {
+      return;
+    }
     let record = ORIGINAL_ATTRS.get(el);
     if (!record) {
       record = {};
@@ -345,7 +354,12 @@ function _apply_attr_translations(root: HTMLElement, locale: Locale): void {
       if (!(attr in record)) {
         record[attr] = value;
       }
-      const original = record[attr] ?? value;
+      let original = record[attr] ?? value;
+      const translatedOriginal = translateText("en", original);
+      if (value !== original && value !== translatedOriginal) {
+        record[attr] = value;
+        original = value;
+      }
       const next = locale === "en" ? translateText("en", original) : original;
       if (value !== next) {
         el.setAttribute(attr, next);
