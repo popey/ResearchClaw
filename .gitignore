@@ -29,6 +29,7 @@ website/node_modules/
 website/.vite/
 website/tsconfig.tsbuildinfo
 website/dist/
+website/public/search-index.json
 
 # misc
 .env
