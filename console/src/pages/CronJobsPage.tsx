@@ -3,6 +3,7 @@ import {
   Timer,
   RefreshCw,
   Play,
+  Square,
   Pencil,
   Trash2,
   Plus,
@@ -13,12 +14,19 @@ import {
   createCronJob,
   deleteCronJob,
   getChannels,
+  getCronJobState,
   getCronJobs,
   replaceCronJob,
   runCronJobNow,
+  stopCronJob,
   toggleCronJob,
 } from "../api";
-import type { ChannelItem, CronJobItem, CronTaskType } from "../types";
+import type {
+  ChannelItem,
+  CronJobItem,
+  CronJobState,
+  CronTaskType,
+} from "../types";
 import {
   PageHeader,
   EmptyState,
@@ -218,6 +226,7 @@ export default function CronJobsPage() {
   const [deletingJobId, setDeletingJobId] = useState<string>("");
   const [editingJob, setEditingJob] = useState<CronJobItem | null>(null);
   const [form, setForm] = useState<CronJobForm | null>(null);
+  const [jobStates, setJobStates] = useState<Record<string, CronJobState>>({});
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "all" | "enabled" | "paused"
@@ -234,8 +243,18 @@ export default function CronJobsPage() {
       getCronJobs(),
       getChannels().catch(() => [] as ChannelItem[]),
     ]);
+    const stateEntries = await Promise.all(
+      jobList.map(async (job) => {
+        try {
+          return [job.id, await getCronJobState(job.id)] as const;
+        } catch {
+          return [job.id, {} as CronJobState] as const;
+        }
+      }),
+    );
     setJobs(jobList);
     setChannels(channelList.map((ch) => ch.name).filter((name) => !!name));
+    setJobStates(Object.fromEntries(stateEntries));
     setLoaded(true);
   }
 
@@ -261,7 +280,52 @@ export default function CronJobsPage() {
     setRunningJobId(jobId);
     try {
       await runCronJobNow(jobId);
-      setNotice({ variant: "success", text: "已触发立即执行" });
+      setNotice({ variant: "info", text: "已触发立即执行，正在等待任务完成" });
+
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        const state = await getCronJobState(jobId);
+        setJobStates((prev) => ({ ...prev, [jobId]: state }));
+        const pendingRuns = Number(state.pending_runs ?? 0);
+        const runningCount = Number(state.running_count ?? 0);
+        if (pendingRuns > 0 || runningCount > 0) {
+          continue;
+        }
+        if (state.last_status === "error") {
+          setNotice({
+            variant: "danger",
+            text: state.last_error || "定时任务执行失败",
+          });
+        } else {
+          setNotice({ variant: "success", text: "定时任务执行完成" });
+        }
+        await onLoad();
+        return;
+      }
+
+      setNotice({
+        variant: "warning",
+        text: "任务仍在执行或排队中，可稍后刷新查看状态",
+      });
+      await onLoad();
+    } finally {
+      setRunningJobId("");
+    }
+  }
+
+  async function onStopNow(jobId: string) {
+    setRunningJobId(jobId);
+    try {
+      const result = await stopCronJob(jobId);
+      const state = await getCronJobState(jobId);
+      setJobStates((prev) => ({ ...prev, [jobId]: state }));
+      setNotice({
+        variant: "warning",
+        text:
+          result.cancelled > 0
+            ? `已停止 ${result.cancelled} 个运行中的任务实例`
+            : "当前没有可停止的运行实例",
+      });
       await onLoad();
     } finally {
       setRunningJobId("");
@@ -358,6 +422,37 @@ export default function CronJobsPage() {
     () => jobs.filter((job) => job.enabled).length,
     [jobs],
   );
+
+  function isJobActive(jobId: string): boolean {
+    const state = jobStates[jobId];
+    return (
+      Number(state?.pending_runs ?? 0) > 0 ||
+      Number(state?.running_count ?? 0) > 0 ||
+      state?.last_status === "running" ||
+      state?.last_status === "queued"
+    );
+  }
+
+  function getJobRuntimeLabel(jobId: string): string {
+    const state = jobStates[jobId];
+    if (!state) return "未知";
+    if (Number(state.running_count ?? 0) > 0) return "执行中";
+    if (Number(state.pending_runs ?? 0) > 0) return "排队中";
+    switch (state.last_status) {
+      case "success":
+        return "最近成功";
+      case "error":
+        return "最近失败";
+      case "skipped":
+        return "已停止";
+      case "running":
+        return "执行中";
+      case "queued":
+        return "排队中";
+      default:
+        return "空闲";
+    }
+  }
 
   return (
     <div className="panel">
@@ -496,16 +591,38 @@ export default function CronJobsPage() {
                     ) : (
                       <Badge variant="neutral">{t("已暂停")}</Badge>
                     )}
+                    <span style={{ margin: "0 6px" }}>·</span>
+                    <Badge
+                      variant={
+                        isJobActive(job.id)
+                          ? "warning"
+                          : jobStates[job.id]?.last_status === "error"
+                          ? "danger"
+                          : "neutral"
+                      }
+                    >
+                      {getJobRuntimeLabel(job.id)}
+                    </Badge>
                   </div>
                 </div>
                 <div className="data-row-actions">
                   <button
                     className="btn-sm"
                     onClick={() => onRunNow(job.id)}
-                    disabled={runningJobId === job.id}
+                    disabled={runningJobId === job.id || isJobActive(job.id)}
                   >
                     <Play size={14} />
-                    {runningJobId === job.id ? "运行中..." : "马上运行"}
+                    {runningJobId === job.id && isJobActive(job.id)
+                      ? "处理中..."
+                      : "马上运行"}
+                  </button>
+                  <button
+                    className="btn-sm btn-secondary"
+                    onClick={() => onStopNow(job.id)}
+                    disabled={runningJobId === job.id || !isJobActive(job.id)}
+                  >
+                    <Square size={14} />
+                    停止
                   </button>
                   <button
                     className="btn-sm btn-secondary"

@@ -94,6 +94,15 @@ export type CronJobItem = {
   meta: Record<string, unknown>;
 };
 
+export type CronJobState = {
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_status?: "success" | "error" | "running" | "queued" | "skipped" | null;
+  last_error?: string | null;
+  pending_runs?: number;
+  running_count?: number;
+};
+
 export type PushMessage = {
   id: string;
   text: string;

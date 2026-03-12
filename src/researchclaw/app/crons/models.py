@@ -158,9 +158,11 @@ class CronJobState(BaseModel):
     next_run_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None
     last_status: Optional[
-        Literal["success", "error", "running", "skipped"]
+        Literal["success", "error", "running", "queued", "skipped"]
     ] = None
     last_error: Optional[str] = None
+    pending_runs: int = 0
+    running_count: int = 0
 
 
 class CronJobView(BaseModel):

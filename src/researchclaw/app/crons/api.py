@@ -123,6 +123,21 @@ async def run_job(
     return {"started": True}
 
 
+@router.post("/jobs/{job_id}/stop")
+async def stop_job(
+    job_id: str,
+    mgr: CronManager = Depends(get_cron_manager),
+):
+    """Cancel running or queued executions for a cron job."""
+    try:
+        result = await mgr.stop_job(job_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="job not found") from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return result
+
+
 @router.get("/jobs/{job_id}/state")
 async def get_job_state(
     job_id: str,

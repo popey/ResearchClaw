@@ -2,6 +2,7 @@ import type {
   AgentRunningConfig,
   ChannelItem,
   CronJobItem,
+  CronJobState,
   EnvItem,
   McpClientItem,
   PaperItem,
@@ -421,6 +422,23 @@ export async function runCronJobNow(jobId: string): Promise<void> {
   await requestVoid(
     `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/run`,
     "Run cron job failed",
+    { method: "POST" },
+  );
+}
+
+export async function getCronJobState(jobId: string): Promise<CronJobState> {
+  return requestJson(
+    `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/state`,
+    "Get cron job state failed",
+  );
+}
+
+export async function stopCronJob(
+  jobId: string,
+): Promise<{ cancelled: number }> {
+  return requestJson(
+    `/api/crons/cron/jobs/${encodeURIComponent(jobId)}/stop`,
+    "Stop cron job failed",
     { method: "POST" },
   );
 }

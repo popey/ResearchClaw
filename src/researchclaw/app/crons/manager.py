@@ -100,6 +100,7 @@ class CronManager:
         self._lock = asyncio.Lock()
         self._states: Dict[str, CronJobState] = {}
         self._rt: Dict[str, _Runtime] = {}
+        self._tasks: Dict[str, set[asyncio.Task]] = {}
         self._started = False
 
     def register(
@@ -367,6 +368,25 @@ class CronManager:
         )
         task.add_done_callback(lambda t: self._task_done_cb(t, job))
 
+    async def stop_job(self, job_id: str) -> dict[str, int]:
+        """Cancel running or queued executions for a persistent job."""
+        if self._repo is None:
+            raise KeyError(f"Job not found: {job_id}")
+        job = await self._repo.get_job(job_id)
+        if not job:
+            raise KeyError(f"Job not found: {job_id}")
+
+        tasks = [
+            task
+            for task in self._tasks.get(job_id, set())
+            if not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return {"cancelled": len(tasks)}
+
     # ----- Simple registered jobs API (backwards compatible) -----
 
     def list_registered_jobs(self) -> list[dict[str, Any]]:
@@ -416,6 +436,21 @@ class CronManager:
                         },
                     ),
                 )
+
+    def _track_task(self, job_id: str, task: asyncio.Task | None) -> None:
+        if task is None:
+            return
+        self._tasks.setdefault(job_id, set()).add(task)
+
+    def _untrack_task(self, job_id: str, task: asyncio.Task | None) -> None:
+        if task is None:
+            return
+        tasks = self._tasks.get(job_id)
+        if not tasks:
+            return
+        tasks.discard(task)
+        if not tasks:
+            self._tasks.pop(job_id, None)
 
     # ----- Internal -----
 
@@ -503,8 +538,22 @@ class CronManager:
             rt = _Runtime(sem=asyncio.Semaphore(job.runtime.max_concurrency))
             self._rt[job.id] = rt
 
-        async with rt.sem:
+        task = asyncio.current_task()
+        self._track_task(job.id, task)
+        st = self._states.get(job.id, CronJobState())
+        st.pending_runs += 1
+        if st.running_count > 0:
+            st.last_status = "queued"
+        self._states[job.id] = st
+
+        acquired = False
+        try:
+            await rt.sem.acquire()
+            acquired = True
+
             st = self._states.get(job.id, CronJobState())
+            st.pending_runs = max(0, st.pending_runs - 1)
+            st.running_count += 1
             st.last_status = "running"
             self._states[job.id] = st
 
@@ -516,6 +565,14 @@ class CronManager:
                     "cron _execute_once: job_id=%s status=success",
                     job.id,
                 )
+            except asyncio.CancelledError:
+                st.last_status = "skipped"
+                st.last_error = "cancelled"
+                logger.info(
+                    "cron _execute_once: job_id=%s status=cancelled",
+                    job.id,
+                )
+                raise
             except Exception as e:
                 st.last_status = "error"
                 st.last_error = repr(e)
@@ -528,3 +585,19 @@ class CronManager:
             finally:
                 st.last_run_at = datetime.now(timezone.utc)
                 self._states[job.id] = st
+        except asyncio.CancelledError:
+            st = self._states.get(job.id, CronJobState())
+            st.last_status = "skipped"
+            st.last_error = "cancelled"
+            st.last_run_at = datetime.now(timezone.utc)
+            self._states[job.id] = st
+            raise
+        finally:
+            st = self._states.get(job.id, CronJobState())
+            if acquired:
+                rt.sem.release()
+                st.running_count = max(0, st.running_count - 1)
+            else:
+                st.pending_runs = max(0, st.pending_runs - 1)
+            self._states[job.id] = st
+            self._untrack_task(job.id, task)

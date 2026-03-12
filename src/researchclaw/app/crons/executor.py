@@ -74,6 +74,34 @@ class CronExecutor:
                 return self._extract_text_from_content_items(content)
         return ""
 
+    @staticmethod
+    def _extract_event_error(event: Any) -> str:
+        if event is None:
+            return ""
+
+        if isinstance(event, dict):
+            event_type = str(event.get("type", "")).lower()
+            if event_type == "error":
+                return str(event.get("content", "") or "").strip()
+            if (
+                str(event.get("object", "")).lower() == "response"
+                and str(event.get("status", "")).lower() == "failed"
+            ):
+                error = event.get("error")
+                if isinstance(error, dict):
+                    return str(error.get("message", "") or "").strip()
+            return ""
+
+        obj = str(getattr(event, "object", "") or "").lower()
+        status = str(getattr(event, "status", "") or "").lower()
+        if obj == "response" and status == "failed":
+            error = getattr(event, "error", None)
+            if error is not None:
+                if isinstance(error, dict):
+                    return str(error.get("message", "") or "").strip()
+                return str(getattr(error, "message", "") or "").strip()
+        return ""
+
     async def _save_console_result_as_new_chat(
         self,
         *,
@@ -215,8 +243,10 @@ class CronExecutor:
         if agent_id:
             req["agent_id"] = agent_id
         result_chunks: list[str] = []
+        stream_error = ""
 
         async def _run() -> None:
+            nonlocal stream_error
             async for event in self._runner.stream_query(req):
                 await self._channel_manager.send_event(
                     channel=job.dispatch.channel,
@@ -228,8 +258,13 @@ class CronExecutor:
                 text = self._extract_event_text(event)
                 if text:
                     result_chunks.append(text)
+                error_text = self._extract_event_error(event)
+                if error_text:
+                    stream_error = error_text
 
         await asyncio.wait_for(_run(), timeout=job.runtime.timeout_seconds)
+        if stream_error:
+            raise RuntimeError(stream_error)
         await self._save_console_result_as_new_chat(
             job=job,
             result_text="\n".join(result_chunks).strip(),

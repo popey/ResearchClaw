@@ -14,6 +14,11 @@ All notable changes to this project are documented in this file.
   - reorganized status/channel/agent-config pages into sectioned dashboards with clearer visual grouping and more polished settings/editing surfaces
   - extended the same visual system to sessions, workspace, cron jobs, models, heartbeat, and skills pages
   - refined global visual tokens for spacing, surfaces, shadows, and gradients while keeping existing information architecture intact
+- Cron runtime handling:
+  - cron execution now treats agent stream `response failed` events as real job failures instead of reporting false `success`
+  - cron job state now exposes `queued` plus `pending_runs` and `running_count` runtime counters
+  - added `POST /api/crons/cron/jobs/{job_id}/stop` to cancel active or queued executions for a job
+  - console cron page now tracks `run now` completion, shows runtime status badges, and exposes a stop action for stuck jobs
 
 ## 2026-03-11
 
