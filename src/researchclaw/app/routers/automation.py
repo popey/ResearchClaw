@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field
 
 from ...config import load_config
 from ..automation import AutomationRunStore
+from ..gateway.auth import extract_header_token
+from ..gateway.dispatch import dedupe_dispatch_mappings, normalize_channel_name
+from ..gateway.ingress import default_session_id
 
 router = APIRouter()
 
@@ -89,15 +92,11 @@ def _configured_automation_token() -> str:
 
 
 def _extract_request_token(req: Request) -> str:
-    auth = str(req.headers.get("authorization", "") or "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    alt = str(
-        req.headers.get("x-researchclaw-token")
-        or req.headers.get("x-researchclaw-automation-token")
-        or "",
-    ).strip()
-    return alt
+    return extract_header_token(
+        req.headers,
+        "x-researchclaw-token",
+        "x-researchclaw-automation-token",
+    )
 
 
 def _verify_trigger_auth(req: Request) -> None:
@@ -115,29 +114,10 @@ def _verify_trigger_auth(req: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid automation token")
 
 
-def _normalize_channel_name(name: str) -> str:
-    return (name or "").strip().lower()
-
-
 def _dedupe_dispatches(
     dispatches: List[Dict[str, str]],
 ) -> List[Dict[str, str]]:
-    out: List[Dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for item in dispatches:
-        channel = _normalize_channel_name(str(item.get("channel", "")))
-        user_id = str(item.get("user_id", "") or "").strip() or "main"
-        session_id = str(item.get("session_id", "") or "").strip() or "main"
-        if not channel:
-            continue
-        key = (channel, user_id, session_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(
-            {"channel": channel, "user_id": user_id, "session_id": session_id},
-        )
-    return out
+    return dedupe_dispatch_mappings(dispatches)
 
 
 def _expand_dispatches(
@@ -156,9 +136,7 @@ def _expand_dispatches(
     ]
 
     if payload.deliver and payload.fanout_channels:
-        channels = [
-            _normalize_channel_name(v) for v in payload.fanout_channels
-        ]
+        channels = [normalize_channel_name(v) for v in payload.fanout_channels]
         channels = [v for v in channels if v]
         if "*" in channels:
             mgr = getattr(req.app.state, "channel_manager", None)
@@ -185,7 +163,7 @@ def _expand_dispatches(
         cfg = load_config()
         if isinstance(cfg, dict):
             last = cfg.get("last_dispatch") or {}
-        channel = _normalize_channel_name(str(last.get("channel", "")))
+        channel = normalize_channel_name(str(last.get("channel", "")))
         user_id = str(last.get("user_id", "") or "").strip()
         session_id = str(last.get("session_id", "") or "").strip()
         dispatches.append(
@@ -354,7 +332,10 @@ async def _queue_or_run_trigger(
 ) -> Dict[str, Any]:
     store = _get_or_create_store(req)
     run_id = str(uuid.uuid4())
-    session_id = (payload.session_id or f"{session_prefix}:{run_id}").strip()
+    session_id = default_session_id(
+        prefix=session_prefix,
+        provided=payload.session_id or f"{session_prefix}:{run_id}",
+    )
     dispatches = _expand_dispatches(
         payload=payload,
         req=req,
@@ -454,7 +435,10 @@ async def trigger_wake(payload: WakeTriggerRequest, req: Request):
     if mode == "next-heartbeat":
         store = _get_or_create_store(req)
         run_id = str(uuid.uuid4())
-        session_id = (payload.session_id or f"wake:{run_id}").strip()
+        session_id = default_session_id(
+            prefix="wake",
+            provided=payload.session_id or f"wake:{run_id}",
+        )
         await store.create(
             run_id=run_id,
             message=payload.text,

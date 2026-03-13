@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from fastapi import FastAPI
+
 from researchclaw.app.routers import control as control_router
 
 
@@ -133,6 +135,43 @@ def test_runner_runtime_stats_prefers_status_snapshot() -> None:
     assert stats["model_provider"] == "openai"
     assert stats["model_name"] == "gpt-test"
     assert stats["agents"] == [{"id": "lab", "running": True}]
+
+
+def test_runtime_status_builds_gateway_snapshot_payload() -> None:
+    app = FastAPI()
+    app.state.started_at = None
+    app.state.runner = SimpleNamespace(
+        is_running=True,
+        list_sessions=lambda: [{"session_id": "s1"}],
+        list_usage_stats=lambda: {
+            "requests": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "fallbacks": 0,
+            "providers": [],
+            "agents": [],
+        },
+        list_agents=lambda: [{"id": "main", "running": True}],
+    )
+    app.state.channel_manager = SimpleNamespace(
+        list_channels=lambda: [{"name": "console"}],
+    )
+    app.state.cron = SimpleNamespace(
+        list_registered_jobs=lambda: [{"id": "heartbeat", "enabled": True}],
+    )
+    app.state.mcp_manager = SimpleNamespace(
+        list_clients=lambda: [{"id": "local"}],
+    )
+    app.state.automation_store = None
+    req = SimpleNamespace(app=app)
+
+    result = asyncio.run(control_router.runtime_status(req))
+
+    assert result["service"] == "ResearchClaw"
+    assert result["runner_running"] is True
+    assert result["channels"] == [{"name": "console"}]
+    assert result["mcp_clients"] == [{"id": "local"}]
+    assert result["runtime"]["cron"]["registered_jobs_total"] == 1
 
 
 def test_update_bindings_updates_root_and_agents(monkeypatch) -> None:

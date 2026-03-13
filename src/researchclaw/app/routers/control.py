@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import shutil
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -12,8 +10,19 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from researchclaw.config import get_heartbeat_config, load_config, save_config
+from researchclaw.config import load_config, save_config
 from researchclaw.constant import CUSTOM_CHANNELS_DIR, WORKING_DIR
+from researchclaw.app.gateway.health import (
+    build_control_status_payload,
+    empty_usage_stats,
+    get_automation_runtime_stats,
+    get_channel_runtime_stats,
+    get_control_cron_jobs,
+    get_cron_runtime_stats,
+    get_heartbeat_runtime_stats,
+    get_runner_runtime_stats,
+    get_skills_runtime_stats,
+)
 
 router = APIRouter()
 
@@ -109,71 +118,8 @@ def _load_mutable_config() -> dict[str, Any]:
     return cfg if isinstance(cfg, dict) else {}
 
 
-def _empty_cron_stats() -> dict[str, Any]:
-    return {
-        "started": False,
-        "scheduler_active": False,
-        "registered_jobs_total": 0,
-        "registered_jobs_enabled": 0,
-        "persistent_jobs_total": 0,
-        "persistent_jobs_enabled": 0,
-        "states_tracked": 0,
-        "running_jobs": 0,
-        "errored_jobs": 0,
-    }
-
-
-def _empty_channel_stats() -> dict[str, Any]:
-    return {
-        "registered_channels": 0,
-        "queued_messages": 0,
-        "pending_messages": 0,
-        "in_progress_keys": 0,
-        "consumer_workers": {"total": 0, "alive": 0},
-        "channels": [],
-    }
-
-
-def _empty_automation_stats() -> dict[str, Any]:
-    return {
-        "total": 0,
-        "queued": 0,
-        "running": 0,
-        "succeeded": 0,
-        "failed": 0,
-    }
-
-
 def _empty_usage_stats() -> dict[str, Any]:
-    return {
-        "requests": 0,
-        "succeeded": 0,
-        "failed": 0,
-        "fallbacks": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "providers": [],
-        "agents": [],
-    }
-
-
-def _heartbeat_config_defaults(
-    *,
-    enabled: bool,
-    healthy: bool,
-    last_heartbeat: float | None = None,
-    age_seconds: int | None = None,
-) -> dict[str, Any]:
-    hb = get_heartbeat_config()
-    return {
-        "enabled": enabled,
-        "configured": enabled,
-        "last_heartbeat": last_heartbeat,
-        "age_seconds": age_seconds,
-        "healthy": healthy,
-        "every": str(getattr(hb, "every", "30m") or "30m"),
-        "target": str(getattr(hb, "target", "last") or "last"),
-    }
+    return empty_usage_stats()
 
 
 def _tail_log_file(path: Path, lines: int = 200) -> str:
@@ -279,245 +225,37 @@ def _save_and_update_channel_catalog(
 
 
 async def _get_control_cron_jobs(cron: Any) -> list[Any]:
-    """Return cron jobs for control page (prefer registered/simple jobs)."""
-    if cron is None:
-        return []
-
-    # Prefer persistent cron jobs.
-    if hasattr(cron, "list_jobs"):
-        try:
-            return await cron.list_jobs()
-        except Exception:
-            pass
-
-    # Backward-compatible path for built-in interval jobs.
-    if hasattr(cron, "list_registered_jobs"):
-        try:
-            return cron.list_registered_jobs()
-        except Exception:
-            pass
-
-    return []
+    return await get_control_cron_jobs(cron)
 
 
 async def _get_cron_runtime_stats(cron: Any) -> dict[str, Any]:
-    """Best-effort cron runtime stats for observability."""
-    if cron is None:
-        return _empty_cron_stats()
-    if hasattr(cron, "get_runtime_stats"):
-        try:
-            stats = await cron.get_runtime_stats()
-            if isinstance(stats, dict):
-                return stats
-        except Exception:
-            pass
-
-    jobs = await _get_control_cron_jobs(cron)
-    total = len(jobs)
-    enabled = sum(
-        1 for job in jobs if isinstance(job, dict) and job.get("enabled", True)
-    )
-    return {
-        "started": True,
-        "scheduler_active": False,
-        "registered_jobs_total": total,
-        "registered_jobs_enabled": enabled,
-        "persistent_jobs_total": total,
-        "persistent_jobs_enabled": enabled,
-        "states_tracked": 0,
-        "running_jobs": 0,
-        "errored_jobs": 0,
-    }
+    return await get_cron_runtime_stats(cron)
 
 
 def _get_runner_runtime_stats(runner: Any) -> dict[str, Any]:
-    """Best-effort runner/session observability snapshot."""
-    if runner is None:
-        return {
-            "running": False,
-            "agent_id": "",
-            "agent_name": "",
-            "tool_count": 0,
-            "default_agent_id": "",
-            "session_count": 0,
-            "model_provider": "",
-            "model_name": "",
-            "agents": [],
-            "usage": _empty_usage_stats(),
-        }
-    session_count = 0
-    try:
-        if hasattr(runner, "list_sessions"):
-            session_count = len(runner.list_sessions())
-        elif hasattr(runner, "session_manager"):
-            session_count = len(runner.session_manager.list_sessions())
-    except Exception:
-        session_count = 0
-
-    model_cfg = {}
-    runner_for_status = getattr(runner, "runner", None)
-    snapshot: dict[str, Any] = {}
-    if hasattr(runner, "get_status_snapshot"):
-        try:
-            snapshot = runner.get_status_snapshot()
-        except Exception:
-            snapshot = {}
-    if hasattr(runner, "get_status_manager"):
-        try:
-            _, manager = runner.get_status_manager()
-            if manager is not None:
-                runner_for_status = getattr(
-                    manager,
-                    "runner",
-                    runner_for_status,
-                )
-        except Exception:
-            runner_for_status = getattr(runner, "runner", None)
-    try:
-        if runner_for_status is not None:
-            model_cfg = (
-                getattr(runner_for_status, "_last_model_config", {}) or {}
-            )
-    except Exception:
-        model_cfg = {}
-
-    usage: dict[str, Any] = _empty_usage_stats()
-    try:
-        if hasattr(runner, "list_usage_stats"):
-            stats = runner.list_usage_stats()
-            if isinstance(stats, dict):
-                usage = stats
-        elif hasattr(runner, "get_usage_stats"):
-            stats = runner.get_usage_stats()
-            if isinstance(stats, dict):
-                usage = stats
-    except Exception:
-        pass
-
-    return {
-        "running": bool(
-            snapshot.get("running", getattr(runner, "is_running", False)),
-        ),
-        "agent_id": str(snapshot.get("agent_id", "") or ""),
-        "agent_name": str(snapshot.get("agent_name", "") or ""),
-        "tool_count": int(snapshot.get("tool_count", 0) or 0),
-        "default_agent_id": str(snapshot.get("default_agent_id", "") or ""),
-        "session_count": session_count,
-        "model_provider": str(model_cfg.get("provider", "") or ""),
-        "model_name": str(model_cfg.get("model_name", "") or ""),
-        "agents": snapshot.get("agents")
-        if isinstance(snapshot.get("agents"), list)
-        else runner.list_agents()
-        if hasattr(runner, "list_agents")
-        else [],
-        "usage": usage,
-    }
+    return get_runner_runtime_stats(runner)
 
 
 def _get_skills_runtime_stats() -> dict[str, Any]:
-    try:
-        from researchclaw.agents.skills_manager import SkillsManager
-
-        active_skills = SkillsManager().list_active_skills()
-    except Exception:
-        active_skills = []
-
-    return {
-        "active_count": len(active_skills),
-        "active_skills": active_skills,
-    }
+    return get_skills_runtime_stats()
 
 
 def _get_heartbeat_runtime_stats() -> dict[str, Any]:
-    enabled = bool(getattr(get_heartbeat_config(), "enabled", False))
-    hb_file = Path(WORKING_DIR) / "heartbeat.json"
-    if not hb_file.exists():
-        return _heartbeat_config_defaults(enabled=enabled, healthy=False)
-
-    try:
-        data = json.loads(hb_file.read_text(encoding="utf-8"))
-    except Exception:
-        return _heartbeat_config_defaults(enabled=enabled, healthy=False)
-
-    ts = float(data.get("timestamp", 0))
-    age = int(time.time() - ts) if ts else None
-    return _heartbeat_config_defaults(
-        enabled=enabled,
-        healthy=enabled and age is not None and age <= 2 * 3600,
-        last_heartbeat=ts,
-        age_seconds=age,
-    )
+    return get_heartbeat_runtime_stats()
 
 
 def _get_channel_runtime_stats(channels: Any) -> dict[str, Any]:
-    """Best-effort channel runtime stats."""
-    if channels is None:
-        return _empty_channel_stats()
-    if hasattr(channels, "get_runtime_stats"):
-        try:
-            stats = channels.get_runtime_stats()
-            if isinstance(stats, dict):
-                return stats
-        except Exception:
-            pass
-    listed = []
-    try:
-        listed = channels.list_channels()
-    except Exception:
-        listed = []
-    stats = _empty_channel_stats()
-    stats["registered_channels"] = len(listed)
-    stats["channels"] = listed
-    return stats
+    return get_channel_runtime_stats(channels)
 
 
 async def _get_automation_stats(req: Request) -> dict[str, Any]:
     store = getattr(req.app.state, "automation_store", None)
-    if store is None or not hasattr(store, "stats"):
-        return _empty_automation_stats()
-    try:
-        stats = await store.stats()
-        if isinstance(stats, dict):
-            return stats
-    except Exception:
-        pass
-    return _empty_automation_stats()
+    return await get_automation_runtime_stats(store)
 
 
 @router.get("/status")
 async def runtime_status(req: Request):
-    started_at = getattr(req.app.state, "started_at", None)
-    uptime_seconds = int(time.time() - started_at) if started_at else 0
-
-    runner = getattr(req.app.state, "runner", None)
-    cron = getattr(req.app.state, "cron", None)
-    channels = getattr(req.app.state, "channel_manager", None)
-    mcp = getattr(req.app.state, "mcp_manager", None)
-    cron_jobs = await _get_control_cron_jobs(cron)
-    cron_stats = await _get_cron_runtime_stats(cron)
-    channel_stats = _get_channel_runtime_stats(channels)
-    runner_stats = _get_runner_runtime_stats(runner)
-    automation_stats = await _get_automation_stats(req)
-    skills_stats = _get_skills_runtime_stats()
-    heartbeat_stats = _get_heartbeat_runtime_stats()
-
-    return {
-        "service": "ResearchClaw",
-        "mode": "24x7-standby",
-        "uptime_seconds": uptime_seconds,
-        "runner_running": runner_stats["running"],
-        "cron_jobs": cron_jobs,
-        "channels": channel_stats.get("channels", []),
-        "mcp_clients": mcp.list_clients() if mcp else [],
-        "runtime": {
-            "runner": runner_stats,
-            "channels": channel_stats,
-            "cron": cron_stats,
-            "automation": automation_stats,
-            "skills": skills_stats,
-            "heartbeat": heartbeat_stats,
-        },
-    }
+    return await build_control_status_payload(req.app)
 
 
 @router.get("/cron-jobs")
