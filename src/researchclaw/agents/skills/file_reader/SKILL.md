@@ -1,7 +1,9 @@
-- name: file_reader
-- description: Read, preview, and summarize text-based files — source code, configs, logs, data files, and plain text documents.
-- emoji: 📄
-- requires: []
+---
+name: file-reader
+description: "Read, preview, and summarize text-based files — source code, configs, logs, data files, and plain text documents. Use when the user asks to read, inspect, or summarize local .txt, .md, .json, .yaml, .csv, .log, or source code files."
+emoji: 📄
+requires: []
+---
 # File Reader Toolbox
 
 Use this skill when the user asks to read or summarize local text-based files. PDFs, Office documents, images, audio, and video are out of scope for this skill and should be handled by their dedicated skills/tools.

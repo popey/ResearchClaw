@@ -1,6 +1,8 @@
-- name: browser_visible
-- description: Launch a visible (headed) Chromium browser for interactive research tasks, demos, or debugging — when the user explicitly asks to see a real browser window.
-- emoji: 🖥️
+---
+name: browser-visible
+description: "Launch a visible (headed) Chromium browser for interactive research tasks, demos, or debugging. Use when the user explicitly asks to see a real browser window, watch page interactions, or needs manual login/CAPTCHA handling."
+emoji: 🖥️
+---
 
 # 可见浏览器（真实窗口）参考
 

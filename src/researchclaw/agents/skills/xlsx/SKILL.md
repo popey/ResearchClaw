@@ -1,6 +1,8 @@
-- name: xlsx
-- description: Create, edit, and analyze Excel spreadsheets — research data, experimental results, statistical analysis, and data visualization.
-- emoji: 📈
+---
+name: xlsx
+description: "Create, edit, and analyze Excel spreadsheets — research data, experimental results, statistical analysis, and data visualization. Use when the user asks to build, modify, or analyze .xlsx files, create financial models, work with formulas, or generate data reports."
+emoji: 📈
+---
 
 # Requirements for Outputs
 

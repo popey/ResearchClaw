@@ -1,7 +1,9 @@
-- name: cron
-- description: Create and manage scheduled tasks that run automatically — periodic literature checks, data collection, report generation, and more.
-- emoji: ⏰
-- requires: []
+---
+name: cron
+description: "Create and manage scheduled tasks that run automatically — periodic literature checks, data collection, report generation, and recurring notifications. Use when the user wants to schedule, list, pause, resume, or delete cron jobs via researchclaw cron."
+emoji: ⏰
+requires: []
+---
 
 # 定时任务管理
 

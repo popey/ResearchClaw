@@ -1,8 +1,10 @@
-- name: himalaya
-- description: Read, search, and organize emails via the himalaya CLI (IMAP/SMTP). Useful for managing research correspondence, collaboration, and paper submission communications.
-- emoji: 📧
-- requires:
+---
+name: himalaya
+description: "Read, search, and organize emails via the himalaya CLI (IMAP/SMTP). Use when the user asks to check email, search messages, list folders, download attachments, or manage email flags and folders."
+emoji: 📧
+requires:
   bins: ["himalaya"]
+---
 # Himalaya Email CLI
 
 Himalaya is a CLI email client that lets you manage emails from the terminal using IMAP, SMTP, Notmuch, or Sendmail backends.
