@@ -1,6 +1,8 @@
-- name: pdf
-- description: Read, create, edit, merge, split, and analyze PDF documents — with special focus on academic papers, forms, and research reports.
-- emoji: 📑
+---
+name: pdf
+description: "Read, create, edit, merge, split, and analyze PDF documents — with special focus on academic papers, forms, and research reports. Use when the user asks to extract text or tables from PDFs, create new PDFs, merge/split files, fill forms, or OCR scanned documents."
+emoji: 📑
+---
 
 # PDF Processing Guide
 

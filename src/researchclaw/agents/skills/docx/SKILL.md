@@ -1,6 +1,8 @@
-- name: docx
-- description: Create, read, and edit Word documents — research papers, reports, proposals, and manuscripts.
-- emoji: 📝
+---
+name: docx
+description: "Create, read, and edit Word documents — research papers, reports, proposals, and manuscripts. Use when the user asks to generate, modify, or analyze .docx files, convert .doc to .docx, or work with tracked changes and comments."
+emoji: 📝
+---
 
 # DOCX creation, editing, and analysis
 

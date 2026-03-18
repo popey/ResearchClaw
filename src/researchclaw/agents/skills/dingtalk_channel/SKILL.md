@@ -1,7 +1,9 @@
-- name: dingtalk_channel_connect
-- description: Use a visible browser to automatically set up ResearchClaw's DingTalk channel integration — creating an enterprise app, configuring the bot, and publishing.
-- emoji: 🤖
-- requires: []
+---
+name: dingtalk-channel-connect
+description: "Use a visible browser to automatically set up ResearchClaw's DingTalk channel integration — creating an enterprise app, configuring the bot, and publishing. Use when the user wants to connect DingTalk, create a DingTalk bot, or configure DingTalk channel credentials."
+emoji: 🤖
+requires: []
+---
 
 # 钉钉 Channel 自动连接（可视浏览器）
 

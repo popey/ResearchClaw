@@ -1,6 +1,8 @@
-- name: pptx
-- description: Create, edit, and analyze PowerPoint presentations — research talks, conference presentations, lecture slides, and poster summaries.
-- emoji: 📊
+---
+name: pptx
+description: "Create, edit, and analyze PowerPoint presentations — research talks, conference presentations, lecture slides, and poster summaries. Use when the user asks to generate, modify, or inspect .pptx files, convert slides to images, or design presentation layouts."
+emoji: 📊
+---
 
 # PPTX Skill
 

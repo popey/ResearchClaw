@@ -1,7 +1,9 @@
-- name: news
-- description: Fetch and summarize the latest research news, academic announcements, and science reporting from trusted sources.
-- emoji: 📰
-- requires: []
+---
+name: news
+description: "Fetch and summarize the latest news from trusted sources across politics, finance, society, world, tech, sports, and entertainment. Use when the user asks for latest news, headlines, or news in a specific category."
+emoji: 📰
+requires: []
+---
 
 # News Reference
 
