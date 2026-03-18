@@ -14,7 +14,7 @@ from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Dict
 
-from ...constant import WORKING_DIR
+from ...constant import CHATS_FILE, WORKING_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -141,39 +141,52 @@ async def run_heartbeat_once(
         "user_id": "main",
     }
 
-    # Check if we should dispatch to the last active channel
+    # Resolve proactive dispatch target.
     target = ""
-    last_dispatch = None
+    dispatch_target = None
     if hb_config:
         target = (getattr(hb_config, "target", "") or "").strip().lower()
-        last_dispatch = _get_last_dispatch_safe()
+        dispatch_target = _resolve_dispatch_target(target)
 
-    if (
-        target == HEARTBEAT_TARGET_LAST
-        and last_dispatch
-        and channel_manager is not None
-    ):
-        ld_channel = getattr(last_dispatch, "channel", None)
-        ld_user_id = getattr(last_dispatch, "user_id", None)
-        ld_session_id = getattr(last_dispatch, "session_id", None)
+    if dispatch_target and channel_manager is not None:
+        td_channel = getattr(dispatch_target, "channel", None)
+        td_user_id = getattr(dispatch_target, "user_id", None)
+        td_session_id = getattr(dispatch_target, "session_id", None)
 
-        if ld_channel and (ld_user_id or ld_session_id):
+        if td_channel and (td_user_id or td_session_id):
 
-            async def _run_and_dispatch() -> None:
-                async for event in runner.stream_query(req):
-                    await channel_manager.send_event(
-                        channel=ld_channel,
-                        user_id=ld_user_id,
-                        session_id=ld_session_id,
-                        event=event,
-                        meta={},
+            async def _run_and_dispatch() -> bool:
+                saw_event = False
+                try:
+                    async for event in runner.stream_query(req):
+                        saw_event = True
+                        await channel_manager.send_event(
+                            channel=td_channel,
+                            user_id=td_user_id,
+                            session_id=td_session_id,
+                            event=event,
+                            meta={},
+                        )
+                except KeyError:
+                    logger.warning(
+                        "heartbeat dispatch skipped: channel unavailable "
+                        "target=%s",
+                        td_channel,
                     )
+                    return saw_event
+                return True
 
             try:
-                await asyncio.wait_for(_run_and_dispatch(), timeout=120)
+                dispatched = await asyncio.wait_for(
+                    _run_and_dispatch(),
+                    timeout=120,
+                )
             except asyncio.TimeoutError:
                 logger.warning("heartbeat run timed out")
-            return
+                return
+            if dispatched:
+                _write_heartbeat_status(working_dir)
+                return
 
     # No dispatch target: run agent only
     async def _run_only() -> None:
@@ -215,6 +228,67 @@ def _get_last_dispatch_safe() -> Any:
         return getattr(config, "last_dispatch", None)
     except (ImportError, Exception):
         return None
+
+
+def _get_latest_chat_dispatch_safe(channel: str) -> Any:
+    """Return the most recent chat target for a specific channel."""
+    try:
+        path = Path(WORKING_DIR) / CHATS_FILE
+        if not path.is_file():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        chats = data.get("chats")
+        if not isinstance(chats, list):
+            return None
+
+        requested = str(channel or "").strip().lower()
+        newest: dict[str, Any] | None = None
+        newest_ts = ""
+        for item in chats:
+            if not isinstance(item, dict):
+                continue
+            item_channel = str(item.get("channel") or "").strip().lower()
+            if item_channel != requested:
+                continue
+            user_id = str(item.get("user_id") or "").strip()
+            session_id = str(item.get("session_id") or "").strip()
+            if not user_id and not session_id:
+                continue
+            ts = str(item.get("updated_at") or item.get("created_at") or "")
+            if newest is None or ts >= newest_ts:
+                newest = item
+                newest_ts = ts
+
+        if newest is None:
+            return None
+
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            channel=requested,
+            user_id=str(newest.get("user_id") or "").strip(),
+            session_id=str(newest.get("session_id") or "").strip(),
+        )
+    except Exception:
+        return None
+
+
+def _resolve_dispatch_target(target: str) -> Any:
+    """Resolve heartbeat dispatch target from config."""
+    target = str(target or "").strip().lower()
+    if not target:
+        return None
+    if target == HEARTBEAT_TARGET_LAST:
+        return _get_last_dispatch_safe()
+
+    out = _get_latest_chat_dispatch_safe(target)
+    if out is None:
+        logger.warning(
+            "heartbeat target=%s has no known chat target yet; "
+            "let that channel send one message first",
+            target,
+        )
+    return out
 
 
 def _get_heartbeat_query_path(working_dir: Path) -> Path | None:

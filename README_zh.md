@@ -254,6 +254,33 @@ researchclaw models add anthropic --type anthropic --model claude-3-5-sonnet --a
 researchclaw models add ollama --type ollama --model qwen3:8b --base-url http://localhost:11434/v1
 ```
 
+## 🤖 聊天命令
+
+在控制台或接入的聊天频道中，可直接输入以下 `/` 命令：
+
+| 命令 | 说明 |
+|------|------|
+| `/new` | 开始新的会话 |
+| `/start` | `/new` 的别名 |
+| `/compact` | 压缩当前对话记忆 |
+| `/clear` | 清空历史与摘要 |
+| `/history` | 查看当前会话统计 |
+| `/compact_str` | 查看当前压缩摘要 |
+| `/papers` | 列出最近讨论过的论文 |
+| `/refs` | 查看当前参考文献库摘要 |
+| `/skills` | 查看当前启用的技能 |
+| `/skills debug <query>` | 查看某个 query 的 skill 路由调试信息 |
+| `/help` | 显示命令帮助 |
+
+另外还支持一组运行时命令：
+
+| 命令 | 说明 |
+|------|------|
+| `/daemon status` | 查看运行状态 |
+| `/daemon reload-config` | 重载配置 |
+| `/daemon version` | 查看版本 |
+| `/daemon logs [n]` | 查看最近 `n` 行日志，默认 `100` |
+
 ## 📋 CLI 参考
 
 ```bash

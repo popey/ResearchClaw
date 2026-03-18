@@ -60,6 +60,7 @@ from ..base import (
     OnReplySent,
     OutgoingContentPart,
     ProcessHandler,
+    RunStatus,
     TextContent,
 )
 
@@ -234,7 +235,10 @@ class FeishuChannel(BaseChannel):
         )
         # Ensure channel_meta is on request for _before_consume_process
         # (AgentRequest may not have the field; base also sets from payload).
-        setattr(request, "channel_meta", meta)
+        if isinstance(request, dict):
+            request["channel_meta"] = meta
+        else:
+            setattr(request, "channel_meta", meta)
         return request
 
     def merge_native_items(self, items: List[Any]) -> Any:
@@ -349,7 +353,8 @@ class FeishuChannel(BaseChannel):
             return None
         async with self._nickname_cache_lock:
             if open_id in self._nickname_cache:
-                return self._nickname_cache[open_id]
+                cached = self._nickname_cache[open_id]
+                return cached or None
         url = (
             "https://open.feishu.cn/open-apis/contact/v3/users/"
             f"{open_id}?user_id_type=open_id"
@@ -365,17 +370,22 @@ class FeishuChannel(BaseChannel):
                 timeout=timeout,
             ) as resp:
                 body = await resp.text()
-                if resp.status >= 400:
-                    logger.info(
-                        "feishu get user name failed: open_id=%s status=%s",
-                        open_id[:20],
-                        resp.status,
-                    )
-                    return None
                 try:
                     data = json.loads(body) if body else {}
                 except json.JSONDecodeError:
                     data = {}
+                if resp.status >= 400:
+                    logger.info(
+                        "feishu get user name failed: open_id=%s status=%s "
+                        "code=%s msg=%s",
+                        open_id[:20],
+                        resp.status,
+                        data.get("code"),
+                        data.get("msg", ""),
+                    )
+                    async with self._nickname_cache_lock:
+                        self._nickname_cache[open_id] = ""
+                    return None
             if data.get("code") != 0:
                 logger.info(
                     "feishu get user name api error: open_id=%s code=%s "
@@ -384,6 +394,8 @@ class FeishuChannel(BaseChannel):
                     data.get("code"),
                     data.get("msg", ""),
                 )
+                async with self._nickname_cache_lock:
+                    self._nickname_cache[open_id] = ""
                 return None
             # Response per Feishu doc: GET contact/v3/users/{user_id}
             # https://open.feishu.cn/document/server-docs/contact-v3/user/get
@@ -434,6 +446,8 @@ class FeishuChannel(BaseChannel):
                     f"missing contact name permission. Add scope e.g. "
                     f"contact:user.base:readonly in Feishu console.",
                 )
+                async with self._nickname_cache_lock:
+                    self._nickname_cache[open_id] = ""
 
             if name:
                 async with self._nickname_cache_lock:
@@ -1490,6 +1504,70 @@ class FeishuChannel(BaseChannel):
                     ok,
                     pt,
                 )
+
+    async def _run_process_loop(
+        self,
+        request: Any,
+        to_handle: str,
+        send_meta: Dict[str, Any],
+    ) -> None:
+        """Aggregate final assistant output into a single Feishu reply.
+
+        Feishu IM is noisy when reasoning/tool events are emitted as separate
+        messages. Keep only final content blocks and send once at the end.
+        """
+        accumulated_parts: List[OutgoingContentPart] = []
+        last_response = None
+        try:
+            async for event in self._process(request):
+                obj = getattr(event, "object", None)
+                status = getattr(event, "status", None)
+                ev_type = getattr(event, "type", None)
+                if (
+                    obj == "message"
+                    and status == RunStatus.Completed
+                    and ev_type == "content"
+                ):
+                    accumulated_parts.extend(
+                        self._message_to_content_parts(event),
+                    )
+                elif obj == "response":
+                    last_response = event
+
+            if last_response and getattr(last_response, "error", None):
+                err = getattr(
+                    last_response.error,
+                    "message",
+                    str(last_response.error),
+                )
+                err_text = (
+                    (send_meta.get("bot_prefix", "") or "")
+                    + f"Error: {err}"
+                )
+                await self._on_consume_error(request, to_handle, err_text)
+            elif accumulated_parts:
+                await self.send_content_parts(
+                    to_handle,
+                    accumulated_parts,
+                    send_meta,
+                )
+            elif last_response is None:
+                await self._on_consume_error(
+                    request,
+                    to_handle,
+                    "An error occurred while processing your request.",
+                )
+
+            if self._on_reply_sent:
+                args = self.get_on_reply_sent_args(request, to_handle)
+                self._on_reply_sent(self.channel, *args)
+        except Exception:
+            logger.exception("feishu channel consume_one failed")
+            await self._on_consume_error(
+                request,
+                to_handle,
+                "An error occurred while processing your request.",
+            )
 
     async def send(
         self,
