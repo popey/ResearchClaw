@@ -39,6 +39,7 @@ const PROVIDER_TYPES = [
   "ollama",
   "dashscope",
   "deepseek",
+  "minimax",
   "other",
   "custom",
 ] as const;
@@ -83,6 +84,33 @@ const PLATFORM_PRESETS: ProviderPreset[] = [
     base_url: "https://api.deepseek.com/v1",
     api_key_placeholder: "sk-...",
     model_names: ["deepseek-chat", "deepseek-reasoner"],
+  },
+  {
+    key: "minimax",
+    label: "MiniMax",
+    description:
+      "MiniMax 官方 OpenAI 兼容接口；国际站 key 用 https://api.minimax.io/v1，中国站开发平台 key 用 https://api.minimaxi.com/v1，否则可能报 401 invalid api key",
+    provider_type: "minimax",
+    base_url: "https://api.minimax.io/v1",
+    api_key_placeholder: "sk-...",
+    model_names: [
+      "MiniMax-M2.7",
+      "MiniMax-M2.5",
+      "MiniMax-M2.5-highspeed",
+      "MiniMax-M2.1",
+      "MiniMax-M2.1-highspeed",
+      "MiniMax-M2",
+    ],
+  },
+  {
+    key: "minimax-coding-plan",
+    label: "MiniMax Coding Plan",
+    description:
+      "MiniMax 官方 Coding Plan / AI Coding Tools 接入；ResearchClaw 这类 agent 走 OpenAI 兼容 /v1。国际站 key 用 .io，中国站开发平台 key 用 .com",
+    provider_type: "minimax",
+    base_url: "https://api.minimax.io/v1",
+    api_key_placeholder: "sk-cp-...",
+    model_names: ["MiniMax-M2.7"],
   },
   {
     key: "dashscope",

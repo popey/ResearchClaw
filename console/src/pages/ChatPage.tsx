@@ -12,6 +12,7 @@ import {
   Send,
   Loader2,
   BrainCircuit,
+  Puzzle,
   Wrench,
   ChevronDown,
   ChevronRight,
@@ -28,7 +29,12 @@ import remarkMath from "remark-math";
 import { useSearchParams } from "react-router-dom";
 import { getSessionDetail, getSessions } from "../api";
 import { useI18n } from "../i18n";
-import type { ChatMessage, SessionItem, ToolCallInfo } from "../types";
+import type {
+  ChatMessage,
+  SessionItem,
+  SkillTraceInfo,
+  ToolCallInfo,
+} from "../types";
 import { preprocessMarkdown } from "../utils/markdown";
 import { MetricPill, PageHeader } from "../components/ui";
 import {
@@ -54,6 +60,11 @@ function formatTs(ts?: number): string {
   return d.toLocaleString();
 }
 
+function buildSessionKey(sessionId?: string, agentId?: string): string {
+  if (!sessionId) return "";
+  return `${agentId || "main"}:${sessionId}`;
+}
+
 export default function ChatPage() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -69,6 +80,7 @@ export default function ChatPage() {
     chatLoading,
     streamContent,
     streamThinking,
+    streamSkillTraces,
     streamToolCalls,
   } = chatState;
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -86,6 +98,7 @@ export default function ChatPage() {
   const querySessionId = searchParams.get("session_id") || undefined;
   const queryAgentId = searchParams.get("agent_id") || undefined;
   const latestSession = sessions[0];
+  const activeSessionKey = buildSessionKey(sessionId, agentId);
 
   const loadSessionList = useCallback(async () => {
     setSessionsLoading(true);
@@ -114,23 +127,14 @@ export default function ChatPage() {
   }, [messages, streamContent, streamThinking, streamToolCalls]);
 
   useEffect(() => {
-    if (!sessionId) return;
-    if (querySessionId === sessionId) return;
-    syncQuerySession(sessionId, agentId);
-    // Keep URL and active session aligned while ChatPage is mounted.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, querySessionId, sessionId]);
-
-  useEffect(() => {
-    const targetSessionId = querySessionId || sessionId;
-    const targetAgentId = queryAgentId || agentId;
+    const targetSessionId = querySessionId;
+    const targetAgentId = queryAgentId || undefined;
     if (!targetSessionId) return;
-    if (querySessionId && querySessionId === sessionId && messages.length > 0) {
+    const hydrationKey = buildSessionKey(targetSessionId, targetAgentId);
+    if (hydrationKey === activeSessionKey && messages.length > 0) {
+      hydratedSessionRef.current = hydrationKey;
       return;
     }
-    // Keep in-memory messages while navigating tabs; only hydrate when needed.
-    if (!querySessionId && messages.length > 0) return;
-    const hydrationKey = `${targetAgentId || "main"}:${targetSessionId}`;
     if (hydrationKey === hydratedSessionRef.current) return;
     if (hydrationKey === openingSessionRef.current) return;
     hydratedSessionRef.current = hydrationKey;
@@ -148,7 +152,6 @@ export default function ChatPage() {
         }));
         replaceChatConversation(targetSessionId, restored, {
           agentId: detail?.agent_id || targetAgentId,
-          stopStreaming: false,
         });
       })
       .catch(() => {});
@@ -156,7 +159,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [agentId, messages.length, queryAgentId, querySessionId, sessionId]);
+  }, [activeSessionKey, messages.length, queryAgentId, querySessionId]);
 
   function syncQuerySession(nextSessionId?: string, nextAgentId?: string) {
     const next = new URLSearchParams(searchParams);
@@ -181,6 +184,7 @@ export default function ChatPage() {
     startNewConversation();
     setChatInput("");
     hydratedSessionRef.current = "";
+    openingSessionRef.current = "";
     syncQuerySession(undefined, undefined);
   }
 
@@ -190,13 +194,10 @@ export default function ChatPage() {
   ) {
     if (!targetSessionId) return;
     const requestedAgentId = targetAgentId || undefined;
-    const targetKey = `${requestedAgentId || "main"}:${targetSessionId}`;
+    const targetKey = buildSessionKey(targetSessionId, requestedAgentId);
     if (openingSessionRef.current === targetKey) return;
-    if (
-      targetSessionId === sessionId &&
-      (requestedAgentId || "main") === (agentId || "main") &&
-      messages.length > 0
-    ) {
+    if (targetKey === activeSessionKey && messages.length > 0) {
+      hydratedSessionRef.current = targetKey;
       syncQuerySession(targetSessionId, requestedAgentId);
       return;
     }
@@ -204,6 +205,7 @@ export default function ChatPage() {
     openingSessionRef.current = targetKey;
     hydratedSessionRef.current = targetKey;
     if (chatLoading) stopChatStreaming();
+    syncQuerySession(targetSessionId, requestedAgentId);
     try {
       const detail = await getSessionDetail(targetSessionId, requestedAgentId);
       const sessionMessages = Array.isArray(detail?.messages)
@@ -214,13 +216,16 @@ export default function ChatPage() {
         content: String(m?.content ?? ""),
       }));
       const resolvedAgentId = detail?.agent_id || requestedAgentId;
-      hydratedSessionRef.current = `${
-        resolvedAgentId || "main"
-      }:${targetSessionId}`;
+      hydratedSessionRef.current = buildSessionKey(
+        targetSessionId,
+        resolvedAgentId,
+      );
       replaceChatConversation(targetSessionId, restored, {
         agentId: resolvedAgentId,
       });
-      syncQuerySession(targetSessionId, resolvedAgentId);
+      if (resolvedAgentId !== requestedAgentId) {
+        syncQuerySession(targetSessionId, resolvedAgentId);
+      }
     } catch {
       // Ignore and keep current UI state.
     } finally {
@@ -303,9 +308,17 @@ export default function ChatPage() {
             )}
             {sessions.map((session) => (
               <button
-                key={session.session_id}
+                key={buildSessionKey(
+                  session.session_id,
+                  session.agent_id || undefined,
+                )}
                 className={`chat-history-item${
-                  session.session_id === sessionId ? " active" : ""
+                  buildSessionKey(
+                    session.session_id,
+                    session.agent_id || undefined,
+                  ) === activeSessionKey
+                    ? " active"
+                    : ""
                 }`}
                 onClick={() =>
                   void onOpenSession(
@@ -389,7 +402,12 @@ export default function ChatPage() {
                     {msg.role === "user" ? "Researcher" : "Scholar"}
                   </div>
                   {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-                  {msg.toolCalls && <ToolCallsBlock calls={msg.toolCalls} />}
+                  {(msg.skillTraces?.length || msg.toolCalls?.length) && (
+                    <ExecutionTraceBlock
+                      skillTraces={msg.skillTraces || []}
+                      calls={msg.toolCalls || []}
+                    />
+                  )}
                   <MessageContent content={msg.content} />
                 </div>
               </div>
@@ -403,8 +421,12 @@ export default function ChatPage() {
                   {streamThinking && (
                     <ThinkingBlock content={streamThinking} streaming />
                   )}
-                  {streamToolCalls.length > 0 && (
-                    <ToolCallsBlock calls={streamToolCalls} />
+                  {(streamSkillTraces.length > 0 ||
+                    streamToolCalls.length > 0) && (
+                    <ExecutionTraceBlock
+                      skillTraces={streamSkillTraces}
+                      calls={streamToolCalls}
+                    />
                   )}
                   {streamContent ? (
                     <MessageContent content={streamContent} />
@@ -506,12 +528,114 @@ function ThinkingBlock({
   );
 }
 
-function ToolCallsBlock({ calls }: { calls: ToolCallInfo[] }) {
+function ExecutionTraceBlock({
+  skillTraces,
+  calls,
+}: {
+  skillTraces: SkillTraceInfo[];
+  calls: ToolCallInfo[];
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const standaloneCalls = calls.filter((call) => !call.skillId);
+
   return (
     <div className="tool-calls-block">
-      {calls.map((tc, i) => (
+      {skillTraces.map((trace) => {
+        const calledTools = trace.calledTools || [];
+        const currentTool =
+          calledTools.length > 0 ? calledTools[calledTools.length - 1] : null;
+        const traceKey = trace.id;
+        const isExpanded = Boolean(expanded[traceKey]);
+        const calledNames = new Set(calledTools.map((tool) => tool.name));
+        const remainingTools = (trace.availableTools || []).filter(
+          (name) => !calledNames.has(name),
+        );
+        const status = currentTool?.status || "running";
+
+        return (
+          <div
+            key={traceKey}
+            className={`tool-call-item tool-call-${status} skill-trace-item`}
+          >
+            <div
+              className="tool-call-header skill-trace-header"
+              onClick={() =>
+                setExpanded((prev) => ({
+                  ...prev,
+                  [traceKey]: !prev[traceKey],
+                }))
+              }
+            >
+              {status === "running" ? (
+                <Loader2 size={13} className="spinner" />
+              ) : status === "error" ? (
+                <XCircle size={13} />
+              ) : (
+                <CheckCircle2 size={13} />
+              )}
+              <Puzzle size={12} />
+              <span className="tool-call-name">
+                {trace.name}
+                {currentTool ? ` · ${currentTool.name}` : ""}
+              </span>
+              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </div>
+            {isExpanded && (
+              <div className="skill-trace-details">
+                {trace.mode && (
+                  <div className="skill-trace-row">
+                    <strong>mode</strong>
+                    <span>{trace.mode}</span>
+                  </div>
+                )}
+                {trace.matched && trace.matched.length > 0 && (
+                  <div className="skill-trace-row">
+                    <strong>matched</strong>
+                    <div className="skill-trace-chips">
+                      {trace.matched.map((item) => (
+                        <span key={item} className="skill-trace-chip">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {calledTools.length > 0 && (
+                  <div className="skill-trace-row">
+                    <strong>called</strong>
+                    <div className="skill-trace-tools">
+                      {calledTools.map((tool, index) => (
+                        <span
+                          key={`${tool.name}-${index}`}
+                          className="skill-trace-chip"
+                        >
+                          {tool.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {remainingTools.length > 0 && (
+                  <div className="skill-trace-row">
+                    <strong>other</strong>
+                    <div className="skill-trace-tools">
+                      {remainingTools.map((tool) => (
+                        <span key={tool} className="skill-trace-chip muted">
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {standaloneCalls.map((tc, i) => (
         <div
-          key={i}
+          key={`${tc.name}-${i}`}
           className={`tool-call-item tool-call-${tc.status || "running"}`}
         >
           <div className="tool-call-header">

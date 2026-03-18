@@ -19,7 +19,7 @@ class ProviderConfig(BaseModel):
     """Provider configuration schema."""
 
     name: str
-    provider_type: str  # openai | anthropic | ollama | dashscope
+    provider_type: str  # openai | anthropic | ollama | dashscope | deepseek | minimax
     api_key: str | None = None
     base_url: str | None = None
     model_name: str | None = None
@@ -232,6 +232,7 @@ async def list_available_models():
                 {"name": "gpt-4.1", "provider": "openai"},
                 {"name": "claude-sonnet-4-20250514", "provider": "anthropic"},
                 {"name": "deepseek-chat", "provider": "deepseek"},
+                {"name": "MiniMax-M2.5", "provider": "minimax"},
                 {"name": "qwen-max", "provider": "dashscope"},
                 {"name": "llama3.2", "provider": "ollama"},
             ],

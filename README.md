@@ -225,6 +225,26 @@ ResearchClaw ships with research-focused skills that can be customized:
 - **research_notes** — Structured note-taking with tagging
 - **pdf** — Advanced PDF processing and annotation
 
+### Standard Skill Support
+
+ResearchClaw now supports standard SKILL-based skills beyond its built-ins.
+
+- Preferred skill format: one directory per skill, with a required `SKILL.md`
+- Optional extra files: `references/` and `scripts/`
+- Supported discovery locations:
+  - project-local `skills/` (OpenClaw-style)
+  - project-local `.agents/skills/`
+  - project-local `.researchclaw/skills/`
+  - user-level `~/.agents/skills/`
+  - user-level `~/.researchclaw/skills/`
+- Built-in Python skills now also ship with `SKILL.md` so they follow the same contract
+
+At runtime, ResearchClaw discovers these skills, syncs them into `active_skills/`, and exposes:
+
+- `skills_list()` to inspect available skills
+- `skills_activate(name)` to load the full `SKILL.md` plus bundled file inventory
+- `skills_read_file(name, path)` to read `SKILL.md`, `references/*`, or `scripts/*`
+
 ## ⚙️ Configuration
 
 ResearchClaw stores all data locally in `~/.researchclaw/`:

@@ -40,7 +40,7 @@ async def paper_digest():
 
     # Search for recent papers in each area
     try:
-        from researchclaw.agents.tools.arxiv_search import arxiv_search
+        from researchclaw.agents.skills.arxiv.tools import arxiv_search
 
         results = []
         for area in areas[:5]:  # Limit to 5 areas

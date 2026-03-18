@@ -56,7 +56,7 @@ async def search_papers(request: PaperSearchRequest):
     """Search papers from external sources."""
     if request.source == "arxiv":
         try:
-            from researchclaw.agents.tools.arxiv_search import arxiv_search
+            from researchclaw.agents.skills.arxiv.tools import arxiv_search
 
             results = arxiv_search(
                 query=request.query,
@@ -104,7 +104,7 @@ async def download_paper(request: PaperDownloadRequest):
         raise HTTPException(status_code=400, detail="Provide arxiv_id or url")
 
     try:
-        from researchclaw.agents.tools.arxiv_search import arxiv_download
+        from researchclaw.agents.skills.arxiv.tools import arxiv_download
 
         result = arxiv_download(
             arxiv_id=request.arxiv_id or "",

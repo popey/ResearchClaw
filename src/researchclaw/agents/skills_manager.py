@@ -16,8 +16,8 @@ Key improvements over CoPaw:
 from __future__ import annotations
 
 import filecmp
+import json
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -31,6 +31,16 @@ logger = logging.getLogger(__name__)
 
 # Built-in skills directory (shipped with the package)
 _BUILTIN_SKILLS_DIR = Path(__file__).parent / "skills"
+_ACTIVE_SKILL_MANIFEST = ".researchclaw-skill.json"
+_PROJECT_SKILL_SUBDIRS: tuple[tuple[str, str], ...] = (
+    ("skills", "project-openclaw"),
+    (".agents/skills", "project-standard"),
+    (".researchclaw/skills", "project-native"),
+)
+_USER_SKILL_DIRS: tuple[tuple[Path, str], ...] = (
+    (Path.home() / ".agents" / "skills", "user-standard"),
+    (Path.home() / ".researchclaw" / "skills", "user-native"),
+)
 
 
 # ── Models ─────────────────────────────────────────────────────────
@@ -39,11 +49,13 @@ _BUILTIN_SKILLS_DIR = Path(__file__).parent / "skills"
 class SkillInfo(BaseModel):
     """Information about a skill."""
 
+    id: str
     name: str
     description: str = ""
     emoji: str = ""
     source: str = "builtin"  # "builtin", "customized", "hub"
     path: str = ""
+    location: str = ""
     enabled: bool = True
     version: str = "0.1.0"
     content: str = ""  # full SKILL.md text
@@ -51,6 +63,9 @@ class SkillInfo(BaseModel):
     scripts: Dict[str, Any] = Field(default_factory=dict)  # nested tree
     requires: Dict[str, Any] = Field(default_factory=dict)
     triggers: List[str] = Field(default_factory=list)
+    scope: str = "builtin"
+    format: str = "legacy"
+    diagnostics: List[str] = Field(default_factory=list)
 
 
 # ── Frontmatter parsing ───────────────────────────────────────────
@@ -210,33 +225,230 @@ def _safe_path_parts(rel_path: str) -> Optional[List[str]]:
     return parts
 
 
+def _iter_project_roots(start: Optional[Path] = None) -> List[Path]:
+    """Return current directory and parents up to the git root/filesystem root."""
+    root = (start or Path.cwd()).resolve()
+    roots: List[Path] = []
+    seen: set[Path] = set()
+    while root not in seen:
+        roots.append(root)
+        seen.add(root)
+        if (root / ".git").exists():
+            break
+        parent = root.parent
+        if parent == root:
+            break
+        root = parent
+    return roots
+
+
+def _iter_skill_dirs(base_dir: Path, *, require_skill_md: bool) -> List[Path]:
+    """Return valid skill directories under a root."""
+    if not base_dir.is_dir():
+        return []
+
+    skill_dirs: List[Path] = []
+    for skill_dir in sorted(base_dir.iterdir()):
+        if not skill_dir.is_dir() or skill_dir.name.startswith((".", "_")):
+            continue
+        has_skill_md = (skill_dir / "SKILL.md").is_file()
+        has_entrypoint = (
+            (skill_dir / "__init__.py").is_file()
+            or (skill_dir / "main.py").is_file()
+        )
+        if require_skill_md and not has_skill_md:
+            continue
+        if not has_skill_md and not has_entrypoint:
+            continue
+        skill_dirs.append(skill_dir)
+    return skill_dirs
+
+
+def _discover_skill_sources(
+    *,
+    skill_names: Optional[List[str]] = None,
+) -> Dict[str, tuple[Path, str, str]]:
+    """Discover skills from builtin, user, and project-standard locations.
+
+    Returns a mapping of canonical skill name -> (skill_dir, source, scope).
+    Later entries override earlier ones to preserve precedence.
+    """
+    requested = set(skill_names or [])
+    discovered: Dict[str, tuple[Path, str, str]] = {}
+
+    def _record(skill_dir: Path, source: str, scope: str) -> None:
+        if requested and skill_dir.name not in requested:
+            return
+        discovered[skill_dir.name] = (skill_dir, source, scope)
+
+    if _BUILTIN_SKILLS_DIR.is_dir():
+        for skill_dir in _iter_skill_dirs(
+            _BUILTIN_SKILLS_DIR,
+            require_skill_md=False,
+        ):
+            _record(skill_dir, "builtin", "builtin")
+
+    custom_dir = Path(CUSTOMIZED_SKILLS_DIR)
+    if custom_dir.is_dir():
+        for skill_dir in _iter_skill_dirs(custom_dir, require_skill_md=False):
+            _record(skill_dir, "customized", "user-native")
+
+    for root_dir, scope in _USER_SKILL_DIRS:
+        for skill_dir in _iter_skill_dirs(root_dir, require_skill_md=True):
+            _record(skill_dir, scope, scope)
+
+    project_roots = list(reversed(_iter_project_roots()))
+    for project_root in project_roots:
+        for subdir, scope in _PROJECT_SKILL_SUBDIRS:
+            skill_root = project_root / subdir
+            for skill_dir in _iter_skill_dirs(skill_root, require_skill_md=True):
+                _record(skill_dir, scope, scope)
+
+    return discovered
+
+
+def _write_active_skill_manifest(
+    skill_dir: Path,
+    *,
+    source_name: str,
+    source_path: Path,
+    scope: str,
+) -> None:
+    """Persist source metadata for an active skill copy."""
+    payload = {
+        "source": source_name,
+        "scope": scope,
+        "origin_path": str(source_path),
+    }
+    (skill_dir / _ACTIVE_SKILL_MANIFEST).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _read_active_skill_manifest(skill_dir: Path) -> Dict[str, Any]:
+    """Read active-skill manifest metadata if present."""
+    manifest_path = skill_dir / _ACTIVE_SKILL_MANIFEST
+    if not manifest_path.is_file():
+        return {}
+    try:
+        data = json.loads(
+            manifest_path.read_text(encoding="utf-8", errors="replace"),
+        )
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        logger.debug("Failed to read skill manifest: %s", manifest_path)
+    return {}
+
+
+def _copy_skill_to_active(
+    source_dir: Path,
+    dest_dir: Path,
+    *,
+    source_name: str,
+    scope: str,
+) -> None:
+    """Copy a skill into active storage and record its origin metadata."""
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    shutil.copytree(source_dir, dest_dir)
+    _write_active_skill_manifest(
+        dest_dir,
+        source_name=source_name,
+        source_path=source_dir,
+        scope=scope,
+    )
+
+
+def _resolve_skill_dir_by_name(
+    name: str,
+    *,
+    source: str = "auto",
+) -> Optional[tuple[str, Path, str, str]]:
+    """Resolve a skill by id or display name across known sources."""
+    requested = name.strip().lower()
+    if not requested:
+        return None
+
+    def _matches(info: SkillInfo) -> bool:
+        return info.id.lower() == requested or info.name.lower() == requested
+
+    candidates: List[tuple[Path, str, str]] = []
+    if source == "active":
+        candidates = [
+            (
+                Path(ACTIVE_SKILLS_DIR) / child.name,
+                "active",
+                "active",
+            )
+            for child in sorted(Path(ACTIVE_SKILLS_DIR).iterdir())
+            if child.is_dir() and not child.name.startswith((".", "_"))
+        ] if Path(ACTIVE_SKILLS_DIR).is_dir() else []
+    elif source == "customized":
+        base = Path(CUSTOMIZED_SKILLS_DIR)
+        candidates = (
+            [(child, "customized", "user-native") for child in sorted(base.iterdir())]
+            if base.is_dir()
+            else []
+        )
+    elif source == "builtin":
+        base = _BUILTIN_SKILLS_DIR
+        candidates = (
+            [(child, "builtin", "builtin") for child in sorted(base.iterdir())]
+            if base.is_dir()
+            else []
+        )
+    else:
+        candidates = list(_discover_skill_sources().values())
+
+    for skill_dir, source_name, scope in candidates:
+        if not skill_dir.is_dir() or skill_dir.name.startswith((".", "_")):
+            continue
+        info = _read_skill_info(skill_dir, source=source_name, scope=scope)
+        if _matches(info):
+            return info.id, skill_dir, source_name, scope
+    return None
+
+
+def _flatten_tree(tree: Dict[str, Any], prefix: str = "") -> List[str]:
+    """Flatten a nested file tree into relative paths."""
+    items: List[str] = []
+    for name, subtree in sorted(tree.items()):
+        rel = f"{prefix}/{name}" if prefix else name
+        if subtree is None:
+            items.append(rel)
+        elif isinstance(subtree, dict):
+            items.extend(_flatten_tree(subtree, rel))
+    return items
+
+
+def _is_disclosable_skill(info: SkillInfo) -> bool:
+    """Whether a skill is valid for catalog disclosure and activation."""
+    if info.format == "standard" and not info.description.strip():
+        logger.warning(
+            "Skipping standard skill without description: %s (%s)",
+            info.name,
+            info.path,
+        )
+        return False
+    return True
+
+
 # ── Core functions ─────────────────────────────────────────────────
 
 
 def list_available_skills() -> List[SkillInfo]:
     """List all available skills (builtin + customised + active status)."""
     skills: Dict[str, SkillInfo] = {}
+    discovered = _discover_skill_sources()
+    for skill_dir, source, scope in discovered.values():
+        info = _read_skill_info(skill_dir, source=source, scope=scope)
+        if not _is_disclosable_skill(info):
+            continue
+        skills[info.id] = info
 
-    # 1. Built-in skills
-    if _BUILTIN_SKILLS_DIR.is_dir():
-        for skill_dir in sorted(_BUILTIN_SKILLS_DIR.iterdir()):
-            if skill_dir.is_dir() and not skill_dir.name.startswith(
-                (".", "_"),
-            ):
-                info = _read_skill_info(skill_dir, source="builtin")
-                skills[info.name] = info
-
-    # 2. Customised skills (override builtin)
-    custom_dir = Path(CUSTOMIZED_SKILLS_DIR)
-    if custom_dir.is_dir():
-        for skill_dir in sorted(custom_dir.iterdir()):
-            if skill_dir.is_dir() and not skill_dir.name.startswith(
-                (".", "_"),
-            ):
-                info = _read_skill_info(skill_dir, source="customized")
-                skills[info.name] = info
-
-    # 3. Mark active skills
+    # Mark active skills
     active_dir = Path(ACTIVE_SKILLS_DIR)
     if active_dir.is_dir():
         active_names = {
@@ -244,8 +456,8 @@ def list_available_skills() -> List[SkillInfo]:
             for d in active_dir.iterdir()
             if d.is_dir() and not d.name.startswith((".", "_"))
         }
-        for name in skills:
-            skills[name].enabled = name in active_names
+        for skill_id in skills:
+            skills[skill_id].enabled = skill_id in active_names
 
     return sorted(skills.values(), key=lambda s: s.name)
 
@@ -285,34 +497,22 @@ def sync_skills_to_working_dir(
 
     synced = 0
 
-    # Collect source directories: builtin + customized override
-    sources: Dict[str, Path] = {}
-
-    if _BUILTIN_SKILLS_DIR.is_dir():
-        for skill_dir in _BUILTIN_SKILLS_DIR.iterdir():
-            if skill_dir.is_dir() and not skill_dir.name.startswith(
-                (".", "_"),
-            ):
-                if skill_names is None or skill_dir.name in skill_names:
-                    sources[skill_dir.name] = skill_dir
-
-    custom_dir = Path(CUSTOMIZED_SKILLS_DIR)
-    if custom_dir.is_dir():
-        for skill_dir in custom_dir.iterdir():
-            if skill_dir.is_dir() and not skill_dir.name.startswith(
-                (".", "_"),
-            ):
-                if skill_names is None or skill_dir.name in skill_names:
-                    sources[skill_dir.name] = skill_dir  # override builtin
-
-    for name, src in sources.items():
+    sources = _discover_skill_sources(skill_names=skill_names)
+    for name, (src, source, scope) in sources.items():
+        info = _read_skill_info(src, source=source, scope=scope)
+        if not _is_disclosable_skill(info):
+            continue
         dest = active_dir / name
         if dest.exists() and not force:
-            if _is_directory_same(src, dest):
+            manifest = _read_active_skill_manifest(dest)
+            if _is_directory_same(src, dest) and manifest.get("source") == source:
                 continue  # skip unchanged
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(src, dest)
+        _copy_skill_to_active(
+            src,
+            dest,
+            source_name=source,
+            scope=scope,
+        )
         synced += 1
 
     logger.info("Synced %d skills to active directory", synced)
@@ -338,6 +538,11 @@ def sync_skills_from_active_to_customized(
         if not skill_dir.is_dir() or skill_dir.name.startswith((".", "_")):
             continue
         if skill_names and skill_dir.name not in skill_names:
+            continue
+
+        manifest = _read_active_skill_manifest(skill_dir)
+        manifest_source = str(manifest.get("source", "")).strip().lower()
+        if manifest_source and manifest_source not in {"builtin", "customized"}:
             continue
 
         # Skip if identical to builtin (no user modifications)
@@ -461,12 +666,10 @@ def load_skill_file(
         )
         return None
 
-    if source == "active":
-        base = Path(ACTIVE_SKILLS_DIR) / skill_name
-    elif source == "customized":
-        base = Path(CUSTOMIZED_SKILLS_DIR) / skill_name
-    else:
-        base = _BUILTIN_SKILLS_DIR / skill_name
+    resolved = _resolve_skill_dir_by_name(skill_name, source=source)
+    if resolved is None:
+        return None
+    _, base, _, _ = resolved
 
     fpath = base / file_path
     # Resolve and verify still under base
@@ -494,23 +697,80 @@ def ensure_skills_initialized() -> None:
 
 def enable_skill(name: str) -> bool:
     """Enable a skill by copying it to the active directory."""
-    sources = [
-        Path(CUSTOMIZED_SKILLS_DIR) / name,
-        _BUILTIN_SKILLS_DIR / name,
-    ]
-    for source in sources:
-        if source.is_dir():
-            dest = Path(ACTIVE_SKILLS_DIR) / name
-            if dest.exists():
-                shutil.rmtree(dest)
-            shutil.copytree(source, dest)
-            return True
-    return False
+    resolved = _resolve_skill_dir_by_name(name, source="auto")
+    if resolved is None:
+        return False
+    skill_id, source_dir, source_name, scope = resolved
+    info = _read_skill_info(source_dir, source=source_name, scope=scope)
+    if not _is_disclosable_skill(info):
+        return False
+    dest = Path(ACTIVE_SKILLS_DIR) / skill_id
+    _copy_skill_to_active(
+        source_dir,
+        dest,
+        source_name=source_name,
+        scope=scope,
+    )
+    return True
+
+
+def activate_skill(
+    name: str,
+    source: str = "active",
+) -> Optional[Dict[str, Any]]:
+    """Return standard activation payload for a skill."""
+    if source not in {"active", "customized", "builtin", "auto"}:
+        return None
+    resolved = _resolve_skill_dir_by_name(name, source=source)
+    if resolved is None:
+        return None
+    _, skill_dir, source_name, scope = resolved
+    if source == "active":
+        manifest = _read_active_skill_manifest(skill_dir)
+        source_name = str(manifest.get("source") or source_name)
+        scope = str(manifest.get("scope") or scope)
+    skill_info = _read_skill_info(
+        skill_dir,
+        source=source_name,
+        scope=scope,
+    )
+
+    if skill_info is None:
+        return None
+    if not _is_disclosable_skill(skill_info):
+        return None
+
+    skill_dir = Path(skill_info.path)
+    if not skill_dir.is_dir():
+        return None
+
+    return {
+        "id": skill_info.id,
+        "name": skill_info.name,
+        "description": skill_info.description,
+        "source": skill_info.source,
+        "scope": skill_info.scope,
+        "path": skill_info.path,
+        "location": skill_info.location,
+        "format": skill_info.format,
+        "diagnostics": list(skill_info.diagnostics),
+        "has_entrypoint": (
+            (skill_dir / "__init__.py").is_file()
+            or (skill_dir / "main.py").is_file()
+        ),
+        "skill_md": skill_info.content,
+        "references": _flatten_tree(skill_info.references),
+        "scripts": _flatten_tree(skill_info.scripts),
+    }
 
 
 def disable_skill(name: str) -> bool:
     """Disable a skill by removing it from the active directory."""
-    dest = Path(ACTIVE_SKILLS_DIR) / name
+    resolved = _resolve_skill_dir_by_name(name, source="active")
+    if resolved is None:
+        return False
+    skill_id, _, _, _ = resolved
+    dest = Path(ACTIVE_SKILLS_DIR) / skill_id
     if dest.exists():
         shutil.rmtree(dest)
         return True
@@ -522,8 +782,18 @@ def delete_skill(name: str) -> bool:
 
     Does NOT delete builtin skills. Also removes from active if present.
     """
-    custom = Path(CUSTOMIZED_SKILLS_DIR) / name
-    active = Path(ACTIVE_SKILLS_DIR) / name
+    resolved_custom = _resolve_skill_dir_by_name(name, source="customized")
+    resolved_active = _resolve_skill_dir_by_name(name, source="active")
+    custom = (
+        Path(CUSTOMIZED_SKILLS_DIR) / resolved_custom[0]
+        if resolved_custom is not None
+        else Path(CUSTOMIZED_SKILLS_DIR) / name
+    )
+    active = (
+        Path(ACTIVE_SKILLS_DIR) / resolved_active[0]
+        if resolved_active is not None
+        else Path(ACTIVE_SKILLS_DIR) / name
+    )
 
     deleted = False
     if custom.exists():
@@ -586,8 +856,19 @@ class SkillsManager:
     ) -> Optional[str]:
         return load_skill_file(skill_name, file_path, source)
 
+    def activate_skill(
+        self,
+        skill_name: str,
+        source: str = "active",
+    ) -> Optional[Dict[str, Any]]:
+        return activate_skill(skill_name, source)
 
-def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
+
+def _read_skill_info(
+    skill_dir: Path,
+    source: str = "builtin",
+    scope: str = "builtin",
+) -> SkillInfo:
     """Read skill metadata from its directory."""
     name = skill_dir.name
     description = ""
@@ -595,6 +876,8 @@ def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
     content = ""
     requires: Dict[str, Any] = {}
     triggers: List[str] = []
+    diagnostics: List[str] = []
+    skill_format = "standard" if (skill_dir / "SKILL.md").exists() else "legacy"
 
     # Try SKILL.md first (primary metadata source)
     skill_md = skill_dir / "SKILL.md"
@@ -618,6 +901,10 @@ def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
         # Override name from frontmatter if present
         if meta.get("name"):
             name = meta["name"]
+        if not description:
+            diagnostics.append("missing_description")
+    else:
+        diagnostics.append("missing_skill_md")
 
     if not description:
         readme = skill_dir / "README.md"
@@ -647,14 +934,19 @@ def _read_skill_info(skill_dir: Path, source: str = "builtin") -> SkillInfo:
     )
 
     return SkillInfo(
+        id=skill_dir.name,
         name=name,
         description=description,
         emoji=emoji,
         source=source,
         path=str(skill_dir),
+        location=str(skill_md.resolve()) if skill_md.exists() else "",
         content=content,
         references=references,
         scripts=scripts,
         requires=requires,
         triggers=triggers,
+        scope=scope,
+        format=skill_format,
+        diagnostics=diagnostics,
     )

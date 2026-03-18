@@ -3,6 +3,6 @@
 
 def register():
     """Register PDF tools."""
-    from ...tools.paper_reader import read_paper
+    from .tools import read_paper
 
     return {"read_paper": read_paper}

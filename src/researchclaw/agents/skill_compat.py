@@ -579,7 +579,7 @@ def build_skill_context_prompt(
         "These skills come from active SKILL.md files (CoPaw/OpenClaw style).",
     )
     lines.append(
-        "Use them as operational playbooks; then call concrete tools to execute.",
+        "Use them as operational playbooks; call skills_activate(name) to load a full skill, then call concrete tools to execute.",
     )
     lines.append("")
     lines.append("Available skills:")
@@ -638,6 +638,6 @@ def build_skill_context_prompt(
 
     lines.append("")
     lines.append(
-        "If a skill references files under references/ or scripts/, read them via skills_read_file.",
+        "If a skill references files under references/ or scripts/, first inspect them via skills_activate and then read concrete files via skills_read_file.",
     )
     return "\n".join(lines)

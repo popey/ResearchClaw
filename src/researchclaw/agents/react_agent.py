@@ -79,6 +79,8 @@ class ScholarAgent:
         self._tools: dict[str, Any] = {}
         self._skill_docs: list[SkillDoc] = []
         self._last_skill_debug: dict[str, Any] = {}
+        self._skill_runtime_catalog: dict[str, dict[str, Any]] = {}
+        self._current_skill_events: list[dict[str, Any]] = []
         self._register_builtin_tools()
         self._register_skills()
 
@@ -113,27 +115,13 @@ class ScholarAgent:
 
     def _register_builtin_tools(self) -> None:
         """Register all built-in research tools."""
-        from .tools.arxiv_search import arxiv_search
         from .tools.bibtex_manager import (
             bibtex_add_entry,
             bibtex_export,
             bibtex_search,
         )
         from .tools.browser_control import browse_url, browser_use
-        from .tools.data_analysis import (
-            data_describe,
-            data_query,
-            plot_chart,
-        )
-        from .tools.cron_jobs import (
-            cron_create_job,
-            cron_delete_job,
-            cron_get_job,
-            cron_list_jobs,
-            cron_pause_job,
-            cron_resume_job,
-            cron_run_job,
-        )
+        from .tools.data_analysis import data_describe, data_query
         from .tools.file_io import (
             read_file,
             write_file,
@@ -143,21 +131,22 @@ class ScholarAgent:
         from .tools.get_current_time import get_current_time
         from .tools.latex_helper import latex_compile_check, latex_template
         from .tools.memory_search import memory_search
-        from .tools.paper_reader import read_paper
         from .tools.semantic_scholar import semantic_scholar_search
         from .tools.send_file import send_file
         from .tools.copaw_compat import (
             execute_shell_command,
             send_file_to_user,
         )
-        from .tools.skill_tools import skills_list, skills_read_file
+        from .tools.skill_tools import (
+            skills_activate,
+            skills_list,
+            skills_read_file,
+        )
         from .tools.shell import run_shell
 
         builtin = {
             # Research tools
-            "arxiv_search": arxiv_search,
             "semantic_scholar_search": semantic_scholar_search,
-            "read_paper": read_paper,
             "bibtex_search": bibtex_search,
             "bibtex_add_entry": bibtex_add_entry,
             "bibtex_export": bibtex_export,
@@ -166,15 +155,6 @@ class ScholarAgent:
             # Data analysis
             "data_describe": data_describe,
             "data_query": data_query,
-            "plot_chart": plot_chart,
-            # Scheduling tools
-            "cron_list_jobs": cron_list_jobs,
-            "cron_get_job": cron_get_job,
-            "cron_create_job": cron_create_job,
-            "cron_delete_job": cron_delete_job,
-            "cron_pause_job": cron_pause_job,
-            "cron_resume_job": cron_resume_job,
-            "cron_run_job": cron_run_job,
             # General tools
             "run_shell": run_shell,
             "execute_shell_command": execute_shell_command,
@@ -188,6 +168,7 @@ class ScholarAgent:
             "send_file_to_user": send_file_to_user,
             "get_current_time": get_current_time,
             "memory_search": memory_search,
+            "skills_activate": skills_activate,
             "skills_list": skills_list,
             "skills_read_file": skills_read_file,
         }
@@ -230,6 +211,7 @@ class ScholarAgent:
 
     def _register_skills(self) -> None:
         """Load and register skills from the active_skills directory."""
+        self._skill_runtime_catalog = {}
         try:
             from .skills_manager import ensure_skills_initialized
 
@@ -249,6 +231,11 @@ class ScholarAgent:
                 continue
             self._load_skill_doc(skill_dir)
             self._load_skill(skill_dir)
+        logger.info(
+            "Skill registry ready: active_dir=%s active_skills=%d",
+            skills_dir,
+            len(self._skill_docs),
+        )
 
     def _refresh_skill_docs(self) -> None:
         """Refresh SKILL.md metadata from active skills directory."""
@@ -276,6 +263,7 @@ class ScholarAgent:
                 )
 
         self._skill_docs = refreshed
+        logger.debug("Skill docs refreshed: %d", len(refreshed))
 
     def _load_skill_doc(self, skill_dir: Path) -> None:
         """Load SKILL.md metadata for CoPaw-style doc-only skills."""
@@ -287,6 +275,11 @@ class ScholarAgent:
             parsed = parse_skill_doc(skill_dir, executable=executable)
             if parsed is not None:
                 self._skill_docs.append(parsed)
+                self._record_skill_runtime(
+                    skill_dir=skill_dir,
+                    skill_name=parsed.name,
+                    tool_names=[],
+                )
         except Exception:
             logger.exception(
                 "Failed to parse SKILL.md for skill: %s",
@@ -313,7 +306,7 @@ class ScholarAgent:
             import sys
 
             # Use the canonical package path so that relative imports
-            # (e.g. ``from ...tools.paper_reader``, ``from ....constant``)
+            # (e.g. ``from ..pdf.tools``, ``from ....constant``)
             # resolve correctly against the installed researchclaw package.
             module_fqn = f"researchclaw.agents.skills.{skill_dir.name}"
             package_fqn = module_fqn  # __init__.py ⇒ module IS the package
@@ -332,6 +325,11 @@ class ScholarAgent:
 
                 runtime = extract_skill_runtime_spec(mod, agent=self)
                 if runtime.tools:
+                    self._record_skill_runtime(
+                        skill_dir=skill_dir,
+                        skill_name=self._resolve_skill_display_name(skill_dir),
+                        tool_names=list(runtime.tools.keys()),
+                    )
                     for tool_name, tool_fn in runtime.tools.items():
                         self._register_tool(
                             tool_name,
@@ -342,10 +340,108 @@ class ScholarAgent:
                         "Loaded skill: %s (%d tools via %s)",
                         skill_dir.name,
                         len(runtime.tools),
-                        runtime.entrypoint or "unknown",
-                    )
+                            runtime.entrypoint or "unknown",
+                        )
         except Exception:
             logger.exception("Failed to load skill: %s", skill_dir.name)
+
+    def _resolve_skill_display_name(self, skill_dir: Path) -> str:
+        """Resolve the display name of a skill from loaded SKILL.md metadata."""
+        skill_md_path = str((skill_dir / "SKILL.md").resolve())
+        for skill in getattr(self, "_skill_docs", []):
+            if str(Path(skill.path).resolve()) == skill_md_path:
+                return skill.name
+        return skill_dir.name
+
+    def _record_skill_runtime(
+        self,
+        *,
+        skill_dir: Path,
+        skill_name: str,
+        tool_names: list[str],
+    ) -> None:
+        """Record skill runtime metadata for logging and UI tracing."""
+        skill_id = skill_dir.name
+        catalog = getattr(self, "_skill_runtime_catalog", {})
+        current = catalog.get(skill_id, {})
+        known_tools = list(current.get("tool_names", []))
+        merged_tools = sorted({*known_tools, *tool_names})
+        catalog[skill_id] = {
+            "id": skill_id,
+            "name": skill_name or current.get("name") or skill_id,
+            "path": str(skill_dir),
+            "tool_names": merged_tools,
+        }
+        self._skill_runtime_catalog = catalog
+
+    def _set_current_skill_events(
+        self,
+        selected_skills: list[SkillDoc],
+        selection_debug: dict[str, Any],
+    ) -> None:
+        """Prepare per-turn skill trace metadata for stream events."""
+        details_raw = selection_debug.get("details", [])
+        details = details_raw if isinstance(details_raw, list) else []
+        catalog = getattr(self, "_skill_runtime_catalog", {})
+        detail_by_name = {
+            str(item.get("name", "")): item
+            for item in details
+            if isinstance(item, dict)
+        }
+
+        events: list[dict[str, Any]] = []
+        for skill in selected_skills:
+            skill_id = Path(skill.path).parent.name
+            runtime = catalog.get(
+                skill_id,
+                {
+                    "id": skill_id,
+                    "name": skill.name,
+                    "tool_names": [],
+                },
+            )
+            detail = detail_by_name.get(skill.name, {})
+            matched = detail.get("matched", [])
+            events.append(
+                {
+                    "id": runtime.get("id", skill_id),
+                    "name": runtime.get("name", skill.name),
+                    "mode": str(detail.get("mode", "")),
+                    "score": detail.get("score"),
+                    "matched": matched if isinstance(matched, list) else [],
+                    "available_tools": list(runtime.get("tool_names", [])),
+                },
+            )
+        self._current_skill_events = events
+
+    def _resolve_skill_meta_for_tool(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Resolve selected skill metadata for a tool call in the current turn."""
+        tool_args = tool_args or {}
+        current_skill_events = getattr(self, "_current_skill_events", [])
+
+        if tool_name == "skills_activate":
+            requested = str(tool_args.get("skill_name", "")).strip().lower()
+            for item in current_skill_events:
+                skill_id = str(item.get("id", "")).strip().lower()
+                skill_name = str(item.get("name", "")).strip().lower()
+                if requested and requested in {skill_id, skill_name}:
+                    return {
+                        "skill_id": str(item.get("id", "")),
+                        "skill_name": str(item.get("name", "")),
+                    }
+
+        for item in current_skill_events:
+            available = item.get("available_tools", [])
+            if isinstance(available, list) and tool_name in available:
+                return {
+                    "skill_id": str(item.get("id", "")),
+                    "skill_name": str(item.get("name", "")),
+                }
+        return {}
 
     # ── Memory ──────────────────────────────────────────────────────────
 
@@ -724,6 +820,32 @@ class ScholarAgent:
                 skills=self._skill_docs,
             )
             self._last_skill_debug = selection_debug
+            self._set_current_skill_events(selected_skills, selection_debug)
+            query_preview = " ".join((user_message or "").strip().split())[:160]
+            selected_names = [skill.name for skill in selected_skills]
+            debug_details = selection_debug.get("details", [])
+            if selected_names:
+                logger.info(
+                    "[Skill Select] query=%s | selected=%s",
+                    query_preview,
+                    selected_names,
+                )
+                if isinstance(debug_details, list):
+                    for detail in debug_details[: len(selected_names)]:
+                        if not isinstance(detail, dict):
+                            continue
+                        logger.info(
+                            "[Skill Select Detail] name=%s mode=%s score=%s matched=%s",
+                            detail.get("name", ""),
+                            detail.get("mode", ""),
+                            detail.get("score", ""),
+                            detail.get("matched", []),
+                        )
+            else:
+                logger.debug(
+                    "[Skill Select] query=%s | selected=[]",
+                    query_preview,
+                )
             skill_hint = build_skill_context_prompt(
                 query=user_message or "",
                 skills=self._skill_docs,
@@ -732,6 +854,8 @@ class ScholarAgent:
             )
             if skill_hint:
                 messages.append({"role": "system", "content": skill_hint})
+        else:
+            self._current_skill_events = []
 
         # Add compact summary if available
         if self.memory.compact_summary:
@@ -1038,6 +1162,16 @@ class ScholarAgent:
         messages = self._build_messages(user_message=message)
         full_content = ""
 
+        for skill_event in self._current_skill_events:
+            yield {
+                "type": "skill_call",
+                "skill_id": skill_event.get("id", ""),
+                "skill_name": skill_event.get("name", ""),
+                "skill_mode": skill_event.get("mode", ""),
+                "matched": skill_event.get("matched", []),
+                "available_tools": skill_event.get("available_tools", []),
+            }
+
         # Prepare tool kwargs for model calls
         stream_model_kwargs: dict[str, Any] = {}
         if self._tool_schemas:
@@ -1067,10 +1201,23 @@ class ScholarAgent:
 
                         elif etype == "tool_call":
                             tool_calls_in_turn.append(event)
+                            raw_args = event.get("arguments", "{}")
+                            if isinstance(raw_args, str):
+                                try:
+                                    parsed_args = _json.loads(raw_args)
+                                except Exception:
+                                    parsed_args = {}
+                            else:
+                                parsed_args = raw_args
+                            skill_meta = self._resolve_skill_meta_for_tool(
+                                event["name"],
+                                parsed_args if isinstance(parsed_args, dict) else {},
+                            )
                             yield {
                                 "type": "tool_call",
                                 "name": event["name"],
                                 "arguments": event.get("arguments", ""),
+                                **skill_meta,
                             }
 
                         elif etype == "done":
@@ -1116,14 +1263,20 @@ class ScholarAgent:
                                 tool_name,
                                 str(raw_args)[:500],
                             )
+                            if isinstance(raw_args, str):
+                                try:
+                                    tool_args = _json.loads(raw_args)
+                                except Exception:
+                                    tool_args = {}
+                            else:
+                                tool_args = raw_args
+                            skill_meta = self._resolve_skill_meta_for_tool(
+                                tool_name,
+                                tool_args if isinstance(tool_args, dict) else {},
+                            )
 
                             if tool_name in self._tools:
                                 try:
-                                    tool_args = (
-                                        _json.loads(raw_args)
-                                        if isinstance(raw_args, str)
-                                        else raw_args
-                                    )
                                     result = self._tools[tool_name](
                                         **tool_args,
                                     )
@@ -1155,6 +1308,7 @@ class ScholarAgent:
                                 "type": "tool_result",
                                 "name": tool_name,
                                 "result": result_str[:2000],
+                                **skill_meta,
                             }
 
                         # Continue reasoning loop
@@ -1213,6 +1367,10 @@ class ScholarAgent:
                                 t_name,
                                 str(t_args)[:500],
                             )
+                            skill_meta = self._resolve_skill_meta_for_tool(
+                                t_name,
+                                t_args if isinstance(t_args, dict) else {},
+                            )
                             yield {
                                 "type": "tool_call",
                                 "name": t_name,
@@ -1220,6 +1378,7 @@ class ScholarAgent:
                                     t_args,
                                     ensure_ascii=False,
                                 ),
+                                **skill_meta,
                             }
 
                             if t_name in self._tools:
@@ -1245,6 +1404,7 @@ class ScholarAgent:
                                 "type": "tool_result",
                                 "name": t_name,
                                 "result": result_str[:2000],
+                                **skill_meta,
                             }
                             tool_results_parts.append(
                                 f"Tool `{t_name}` result:\n{result_str}",
@@ -1326,20 +1486,27 @@ class ScholarAgent:
                             tool_name,
                             str(tool_args_raw)[:500],
                         )
+                        if isinstance(tool_args_raw, str):
+                            try:
+                                tool_args = _json.loads(tool_args_raw)
+                            except Exception:
+                                tool_args = {}
+                        else:
+                            tool_args = tool_args_raw
+                        skill_meta = self._resolve_skill_meta_for_tool(
+                            tool_name,
+                            tool_args if isinstance(tool_args, dict) else {},
+                        )
 
                         yield {
                             "type": "tool_call",
                             "name": tool_name,
                             "arguments": str(tool_args_raw),
+                            **skill_meta,
                         }
 
                         if tool_name in self._tools:
                             try:
-                                tool_args = (
-                                    _json.loads(tool_args_raw)
-                                    if isinstance(tool_args_raw, str)
-                                    else tool_args_raw
-                                )
                                 result = self._tools[tool_name](
                                     **tool_args,
                                 )
@@ -1375,6 +1542,7 @@ class ScholarAgent:
                             "type": "tool_result",
                             "name": tool_name,
                             "result": result_str[:2000],
+                            **skill_meta,
                         }
 
                     continue

@@ -1124,6 +1124,55 @@ textarea::placeholder {
   user-select: none;
   color: var(--text-secondary);
 }
+.skill-trace-header {
+  cursor: pointer;
+}
+.skill-trace-header .tool-call-name {
+  flex: 1;
+}
+.skill-trace-item {
+  overflow: hidden;
+}
+.skill-trace-details {
+  border-top: 1px solid var(--border);
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skill-trace-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--text-secondary);
+}
+.skill-trace-row strong {
+  min-width: 44px;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.skill-trace-chips,
+.skill-trace-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.skill-trace-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--brand-700);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.skill-trace-chip.muted {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+}
 .tool-call-name {
   font-family: var(--font-mono, "SF Mono", "Fira Code", monospace);
   color: var(--text-primary);

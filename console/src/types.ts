@@ -3,6 +3,8 @@ export type ChatMessage = {
   content: string;
   /** Thinking/reasoning content (from thinking models) */
   thinking?: string;
+  /** Skill traces captured during this turn */
+  skillTraces?: SkillTraceInfo[];
   /** Tool calls made in this turn */
   toolCalls?: ToolCallInfo[];
 };
@@ -12,6 +14,17 @@ export type ToolCallInfo = {
   arguments?: string;
   result?: string;
   status?: "running" | "done" | "error";
+  skillId?: string;
+  skillName?: string;
+};
+
+export type SkillTraceInfo = {
+  id: string;
+  name: string;
+  mode?: string;
+  matched?: string[];
+  availableTools?: string[];
+  calledTools?: ToolCallInfo[];
 };
 
 /** SSE event from /api/agent/chat/stream */
@@ -20,6 +33,7 @@ export type StreamEvent = {
     | "thinking"
     | "content"
     | "content_replace"
+    | "skill_call"
     | "tool_call"
     | "tool_result"
     | "done"
@@ -28,6 +42,11 @@ export type StreamEvent = {
   name?: string;
   arguments?: string;
   result?: string;
+  skill_id?: string;
+  skill_name?: string;
+  skill_mode?: string;
+  matched?: string[];
+  available_tools?: string[];
   session_id?: string;
   agent_id?: string;
 };
@@ -119,9 +138,16 @@ export type EnvItem = {
 };
 
 export type SkillItem = {
+  id?: string;
   name?: string;
   enabled?: boolean;
   description?: string;
+  source?: string;
+  scope?: string;
+  path?: string;
+  location?: string;
+  format?: string;
+  diagnostics?: string[];
 };
 
 export type McpClientItem = {

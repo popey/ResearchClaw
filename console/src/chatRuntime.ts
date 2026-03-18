@@ -1,5 +1,10 @@
 import { streamChat } from "./api";
-import type { ChatMessage, StreamEvent, ToolCallInfo } from "./types";
+import type {
+  ChatMessage,
+  SkillTraceInfo,
+  StreamEvent,
+  ToolCallInfo,
+} from "./types";
 
 const CHAT_STATE_STORAGE_KEY = "researchclaw.chat.state.v1";
 
@@ -10,6 +15,7 @@ export type ChatRuntimeState = {
   chatLoading: boolean;
   streamContent: string;
   streamThinking: string;
+  streamSkillTraces: SkillTraceInfo[];
   streamToolCalls: ToolCallInfo[];
 };
 
@@ -26,6 +32,7 @@ const EMPTY_STATE: ChatRuntimeState = {
   chatLoading: false,
   streamContent: "",
   streamThinking: "",
+  streamSkillTraces: [],
   streamToolCalls: [],
 };
 
@@ -67,6 +74,49 @@ function normalizeMessages(value: unknown): ChatMessage[] {
         role: normalizeRole(msg.role),
         content: String(msg.content ?? ""),
         thinking: msg.thinking ? String(msg.thinking) : undefined,
+        skillTraces: Array.isArray(msg.skillTraces)
+          ? msg.skillTraces
+              .filter((trace) => trace && typeof trace === "object")
+              .map((trace) => ({
+                id: String(trace?.id ?? "unknown-skill"),
+                name: String(trace?.name ?? trace?.id ?? "unknown-skill"),
+                mode:
+                  trace?.mode === undefined ? undefined : String(trace.mode),
+                matched: Array.isArray(trace?.matched)
+                  ? trace.matched.map((item) => String(item))
+                  : undefined,
+                availableTools: Array.isArray(trace?.availableTools)
+                  ? trace.availableTools.map((item) => String(item))
+                  : undefined,
+                calledTools: Array.isArray(trace?.calledTools)
+                  ? trace.calledTools.map((tc) => ({
+                      name: String(tc?.name ?? "unknown"),
+                      arguments:
+                        tc?.arguments === undefined
+                          ? undefined
+                          : String(tc.arguments),
+                      result:
+                        tc?.result === undefined
+                          ? undefined
+                          : String(tc.result),
+                      status:
+                        tc?.status === "running" ||
+                        tc?.status === "done" ||
+                        tc?.status === "error"
+                          ? tc.status
+                          : undefined,
+                      skillId:
+                        tc?.skillId === undefined
+                          ? undefined
+                          : String(tc.skillId),
+                      skillName:
+                        tc?.skillName === undefined
+                          ? undefined
+                          : String(tc.skillName),
+                    }))
+                  : undefined,
+              }))
+          : undefined,
         toolCalls: Array.isArray(msg.toolCalls)
           ? msg.toolCalls.map((tc) => ({
               name: String(tc?.name ?? "unknown"),
@@ -79,6 +129,12 @@ function normalizeMessages(value: unknown): ChatMessage[] {
                 tc?.status === "error"
                   ? tc.status
                   : undefined,
+              skillId:
+                tc?.skillId === undefined ? undefined : String(tc.skillId),
+              skillName:
+                tc?.skillName === undefined
+                  ? undefined
+                  : String(tc.skillName),
             }))
           : undefined,
       };
@@ -101,6 +157,7 @@ function loadInitialState(): ChatRuntimeState {
       chatLoading: false,
       streamContent: "",
       streamThinking: "",
+      streamSkillTraces: [],
       streamToolCalls: [],
     };
   } catch {
@@ -128,6 +185,7 @@ function persistState() {
       chatLoading: state.chatLoading,
       streamContent: state.streamContent,
       streamThinking: state.streamThinking,
+      streamSkillTraces: state.streamSkillTraces,
       streamToolCalls: state.streamToolCalls,
     };
     localStorage.setItem(CHAT_STATE_STORAGE_KEY, JSON.stringify(payload));
@@ -151,6 +209,7 @@ function resetStreamFields(prev: ChatRuntimeState): ChatRuntimeState {
     ...prev,
     streamContent: "",
     streamThinking: "",
+    streamSkillTraces: [],
     streamToolCalls: [],
   };
 }
@@ -159,7 +218,11 @@ function setStreamPatch(
   patch: Partial<
     Pick<
       ChatRuntimeState,
-      "streamContent" | "streamThinking" | "streamToolCalls" | "chatLoading"
+      | "streamContent"
+      | "streamThinking"
+      | "streamSkillTraces"
+      | "streamToolCalls"
+      | "chatLoading"
     >
   >,
 ) {
@@ -192,6 +255,8 @@ function pushRunningToolCall(
       name: event.name || "unknown",
       arguments: event.arguments,
       status: "running",
+      skillId: event.skill_id,
+      skillName: event.skill_name,
     },
   ];
 }
@@ -209,6 +274,8 @@ function resolveToolResult(
       ...next[idx],
       result: event.result,
       status: "done",
+      skillId: event.skill_id || next[idx].skillId,
+      skillName: event.skill_name || next[idx].skillName,
     };
     return next;
   }
@@ -216,7 +283,77 @@ function resolveToolResult(
     name: event.name || "unknown",
     result: event.result,
     status: "done",
+    skillId: event.skill_id,
+    skillName: event.skill_name,
   });
+  return next;
+}
+
+function pushSkillTrace(
+  traces: SkillTraceInfo[],
+  event: StreamEvent,
+): SkillTraceInfo[] {
+  const skillId = event.skill_id || event.skill_name || "unknown-skill";
+  const idx = traces.findIndex((trace) => trace.id === skillId);
+  const nextTrace: SkillTraceInfo = {
+    id: skillId,
+    name: event.skill_name || skillId,
+    mode: event.skill_mode,
+    matched: Array.isArray(event.matched) ? [...event.matched] : [],
+    availableTools: Array.isArray(event.available_tools)
+      ? [...event.available_tools]
+      : [],
+    calledTools: idx === -1 ? [] : [...(traces[idx].calledTools || [])],
+  };
+
+  if (idx === -1) return [...traces, nextTrace];
+  const next = [...traces];
+  next[idx] = {
+    ...traces[idx],
+    ...nextTrace,
+    calledTools: traces[idx].calledTools || [],
+  };
+  return next;
+}
+
+function updateSkillTraceWithTool(
+  traces: SkillTraceInfo[],
+  event: StreamEvent,
+): SkillTraceInfo[] {
+  const skillId = event.skill_id;
+  if (!skillId) return traces;
+  const idx = traces.findIndex((trace) => trace.id === skillId);
+  if (idx === -1) return traces;
+
+  const trace = traces[idx];
+  const calledTools = [...(trace.calledTools || [])];
+  const toolIdx = calledTools.findIndex(
+    (tool) => tool.name === event.name && tool.status === "running",
+  );
+  const nextTool: ToolCallInfo = {
+    name: event.name || "unknown",
+    arguments: event.arguments,
+    result: event.result,
+    status: event.type === "tool_result" ? "done" : "running",
+    skillId: event.skill_id,
+    skillName: event.skill_name,
+  };
+
+  if (event.type === "tool_result" && toolIdx !== -1) {
+    calledTools[toolIdx] = {
+      ...calledTools[toolIdx],
+      ...nextTool,
+      status: "done",
+    };
+  } else if (toolIdx === -1) {
+    calledTools.push(nextTool);
+  }
+
+  const next = [...traces];
+  next[idx] = {
+    ...trace,
+    calledTools,
+  };
   return next;
 }
 
@@ -230,6 +367,9 @@ function finalizeStreamWithContent(finalContent: string) {
         role: "assistant",
         content: finalContent,
         thinking: prev.streamThinking || undefined,
+        skillTraces: prev.streamSkillTraces.length
+          ? [...prev.streamSkillTraces]
+          : undefined,
         toolCalls: prev.streamToolCalls.length
           ? [...prev.streamToolCalls]
           : undefined,
@@ -303,6 +443,7 @@ export function sendChatMessage(
 
   let accContent = "";
   let accThinking = "";
+  let accSkillTraces: SkillTraceInfo[] = [];
   let accToolCalls: ToolCallInfo[] = [];
 
   streamController = streamChat(
@@ -334,14 +475,27 @@ export function sendChatMessage(
           setStreamPatch({ streamContent: accContent });
           break;
 
+        case "skill_call":
+          accSkillTraces = pushSkillTrace(accSkillTraces, event);
+          setStreamPatch({ streamSkillTraces: [...accSkillTraces] });
+          break;
+
         case "tool_call":
           accToolCalls = pushRunningToolCall(accToolCalls, event);
-          setStreamPatch({ streamToolCalls: [...accToolCalls] });
+          accSkillTraces = updateSkillTraceWithTool(accSkillTraces, event);
+          setStreamPatch({
+            streamToolCalls: [...accToolCalls],
+            streamSkillTraces: [...accSkillTraces],
+          });
           break;
 
         case "tool_result":
           accToolCalls = resolveToolResult(accToolCalls, event);
-          setStreamPatch({ streamToolCalls: [...accToolCalls] });
+          accSkillTraces = updateSkillTraceWithTool(accSkillTraces, event);
+          setStreamPatch({
+            streamToolCalls: [...accToolCalls],
+            streamSkillTraces: [...accSkillTraces],
+          });
           break;
 
         case "done": {

@@ -42,6 +42,7 @@ _ALLOWED_PROVIDER_TYPES = {
     "ollama",
     "dashscope",
     "deepseek",
+    "minimax",
     "other",
     "custom",
 }

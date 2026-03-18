@@ -5,7 +5,7 @@ tools = {}
 
 def register():
     """Register ArXiv skill tools."""
-    from ...tools.arxiv_search import arxiv_search, arxiv_download, arxiv_get_paper
+    from .tools import arxiv_download, arxiv_get_paper, arxiv_search
 
     return {
         "arxiv_search": arxiv_search,

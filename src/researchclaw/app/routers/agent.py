@@ -136,6 +136,7 @@ async def chat_stream(request: ChatRequest, req: Request):
     Sends events of these types:
     - ``thinking`` — reasoning/thinking tokens (from thinking models)
     - ``content`` — regular content tokens
+    - ``skill_call`` — the agent selected a skill for this turn
     - ``tool_call`` — the agent is calling a tool
     - ``tool_result`` — tool execution result
     - ``done`` — final complete response

@@ -23,7 +23,7 @@ def register():
         dict
             Summary with structure depending on level.
         """
-        from ...tools.paper_reader import read_paper
+        from ..pdf.tools import read_paper
 
         paper = read_paper(source)
         if "error" in paper:

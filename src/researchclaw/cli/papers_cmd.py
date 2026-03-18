@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from researchclaw.agents.tools.arxiv_search import arxiv_download, arxiv_search
+from researchclaw.agents.skills.arxiv.tools import arxiv_download, arxiv_search
 
 
 @click.group()

@@ -1,4 +1,4 @@
-from researchclaw.agents.tools.arxiv_search import _looks_like_rate_limit_error
+from researchclaw.agents.skills.arxiv.tools import _looks_like_rate_limit_error
 from researchclaw.agents.tools.semantic_scholar import _retry_after_seconds
 
 

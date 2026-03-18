@@ -223,6 +223,26 @@ ResearchClaw 内置了面向科研的技能，且支持自定义扩展：
 - **research_notes** — 结构化笔记与标签管理
 - **pdf** — 高级 PDF 处理
 
+### 标准 Skill 支持
+
+ResearchClaw 现在不仅支持内置技能，也支持按标准 `SKILL.md` 结构加载外部 skill。
+
+- 推荐格式：一个 skill 一个目录，并且必须包含 `SKILL.md`
+- 可选附属目录：`references/`、`scripts/`
+- 当前支持的发现位置：
+  - 项目内 `skills/`（兼容 OpenClaw 风格）
+  - 项目内 `.agents/skills/`
+  - 项目内 `.researchclaw/skills/`
+  - 用户级 `~/.agents/skills/`
+  - 用户级 `~/.researchclaw/skills/`
+- 仓库内置的 Python skill 现在也都补齐了 `SKILL.md`，统一走同一套契约
+
+运行时会自动发现这些 skill，同步到 `active_skills/`，并提供：
+
+- `skills_list()`：查看可用 skill
+- `skills_activate(name)`：加载完整 `SKILL.md` 与附属文件清单
+- `skills_read_file(name, path)`：读取 `SKILL.md`、`references/*` 或 `scripts/*`
+
 ## ⚙️ 配置
 
 ResearchClaw 将所有数据存储在本地 `~/.researchclaw/`：

@@ -1,8 +1,4 @@
-"""ArXiv paper search and download tool.
-
-Provides functions to search ArXiv for papers, retrieve metadata, and
-download PDFs for offline reading.
-"""
+"""ArXiv paper search and download tools."""
 
 from __future__ import annotations
 
@@ -12,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ...constant import PAPERS_DIR
+from ....constant import PAPERS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -30,32 +26,7 @@ def arxiv_search(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    """Search ArXiv for academic papers.
-
-    Parameters
-    ----------
-    query:
-        Search query string. Supports ArXiv query syntax
-        (e.g., ``"ti:transformer AND cat:cs.CL"``).
-    max_results:
-        Maximum number of results to return (default 10, max 50).
-    sort_by:
-        Sort order: ``"relevance"`` (default), ``"lastUpdatedDate"``,
-        or ``"submittedDate"``.
-    categories:
-        Optional list of ArXiv categories to filter (e.g., ``["cs.CL", "cs.AI"]``).
-    date_from:
-        Optional start date in ``YYYY-MM-DD`` format.
-    date_to:
-        Optional end date in ``YYYY-MM-DD`` format.
-
-    Returns
-    -------
-    list[dict]
-        List of paper metadata dicts with keys: ``title``, ``authors``,
-        ``abstract``, ``arxiv_id``, ``pdf_url``, ``published``,
-        ``updated``, ``categories``, ``doi``.
-    """
+    """Search ArXiv for academic papers."""
     try:
         import arxiv
 
@@ -71,7 +42,6 @@ def arxiv_search(
             arxiv.SortCriterion.Relevance,
         )
 
-        # Build the query with optional category filters
         full_query = query
         if categories:
             cat_filter = " OR ".join(f"cat:{c}" for c in categories)
@@ -115,7 +85,6 @@ def arxiv_search(
                 )
                 results = []
                 for paper in client.results(search):
-                    # Apply date filtering if specified
                     if (
                         date_from
                         and paper.published.strftime("%Y-%m-%d") < date_from
@@ -148,7 +117,6 @@ def arxiv_search(
                 last_error = exc
                 if not _looks_like_rate_limit_error(exc) or attempt == 2:
                     break
-                # Progressive throttling for arXiv rate limit recovery.
                 page_size = max(1, min(page_size, 10))
                 delay_seconds = min(delay_seconds * 1.8, 10.0)
                 time.sleep(min(2.0 * (attempt + 1), 5.0))
@@ -180,20 +148,7 @@ def arxiv_download(
     arxiv_id: str,
     output_dir: Optional[str] = None,
 ) -> dict[str, str]:
-    """Download a paper PDF from ArXiv.
-
-    Parameters
-    ----------
-    arxiv_id:
-        The ArXiv paper ID (e.g., ``"2301.07041"``).
-    output_dir:
-        Directory to save the PDF. Defaults to ``~/.researchclaw/papers/``.
-
-    Returns
-    -------
-    dict
-        Result with ``path`` (file path) or ``error`` message.
-    """
+    """Download a paper PDF from ArXiv."""
     try:
         import arxiv
 
@@ -204,7 +159,6 @@ def arxiv_download(
         search = arxiv.Search(id_list=[arxiv_id])
         paper = next(client.results(search))
 
-        # Download PDF
         filename = f"{arxiv_id.replace('/', '_')}.pdf"
         filepath = Path(output_dir) / filename
         paper.download_pdf(dirpath=output_dir, filename=filename)
@@ -225,18 +179,7 @@ def arxiv_download(
 
 
 def arxiv_get_paper(arxiv_id: str) -> dict[str, Any]:
-    """Get detailed metadata for a specific ArXiv paper.
-
-    Parameters
-    ----------
-    arxiv_id:
-        The ArXiv paper ID.
-
-    Returns
-    -------
-    dict
-        Full paper metadata including abstract, authors, dates, etc.
-    """
+    """Get detailed metadata for a specific ArXiv paper."""
     try:
         import arxiv
 
@@ -265,4 +208,13 @@ def arxiv_get_paper(arxiv_id: str) -> dict[str, Any]:
     except StopIteration:
         return {"error": f"Paper not found: {arxiv_id}"}
     except Exception as e:
-        return {"error": f"Failed to get paper info: {e}"}
+        logger.exception("ArXiv get paper failed")
+        return {"error": f"Failed to get paper: {e}"}
+
+
+__all__ = [
+    "_looks_like_rate_limit_error",
+    "arxiv_search",
+    "arxiv_download",
+    "arxiv_get_paper",
+]

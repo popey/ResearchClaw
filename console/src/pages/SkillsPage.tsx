@@ -17,8 +17,12 @@ import {
   SurfaceCard,
 } from "../components/ui";
 
+function getSkillId(skill: SkillItem, idx: number): string {
+  return skill.id || skill.name || `skill-${idx}`;
+}
+
 function getSkillName(skill: SkillItem, idx: number): string {
-  return skill.name || `skill-${idx}`;
+  return skill.name || skill.id || `skill-${idx}`;
 }
 
 export default function SkillsPage() {
@@ -53,8 +57,9 @@ export default function SkillsPage() {
   const filteredSkills = useMemo(
     () =>
       skills.filter((skill, idx) => {
+        const skillId = getSkillId(skill, idx);
         const skillName = getSkillName(skill, idx);
-        return `${skillName} ${skill.description || ""}`
+        return `${skillId} ${skillName} ${skill.description || ""} ${skill.source || ""} ${skill.scope || ""} ${skill.format || ""} ${skill.path || ""}`
           .toLowerCase()
           .includes(normalizedQuery);
       }),
@@ -113,10 +118,14 @@ export default function SkillsPage() {
             <div className="empty-inline">当前筛选条件下没有匹配技能</div>
           )}
           {filteredSkills.map((skill: SkillItem, idx: number) => {
+            const skillId = getSkillId(skill, idx);
             const skillName = getSkillName(skill, idx);
-            const isActive = active.includes(skillName);
+            const isActive = active.includes(skillId);
+            const diagnostics = Array.isArray(skill.diagnostics)
+              ? skill.diagnostics
+              : [];
             return (
-              <div key={skillName} className="data-row">
+              <div key={skillId} className="data-row">
                 <div className="data-row-info">
                   <div className="data-row-title">
                     <Puzzle
@@ -129,15 +138,41 @@ export default function SkillsPage() {
                     ) : (
                       <Badge variant="neutral">已禁用</Badge>
                     )}
+                    {skill.format && (
+                      <Badge
+                        variant={
+                          skill.format === "standard" ? "info" : "warning"
+                        }
+                      >
+                        {skill.format}
+                      </Badge>
+                    )}
+                    {skill.source && (
+                      <Badge variant="neutral">{skill.source}</Badge>
+                    )}
                   </div>
                   {skill.description && (
                     <div className="data-row-meta">{skill.description}</div>
+                  )}
+                  <div className="data-row-meta">
+                    <code>ID: {skillId}</code>
+                    {skill.scope ? ` · scope: ${skill.scope}` : ""}
+                  </div>
+                  {skill.location && (
+                    <div className="data-row-meta">
+                      <code>{skill.location}</code>
+                    </div>
+                  )}
+                  {diagnostics.length > 0 && (
+                    <div className="data-row-meta">
+                      诊断: {diagnostics.join(", ")}
+                    </div>
                   )}
                 </div>
                 <div className="data-row-actions">
                   <Toggle
                     checked={isActive}
-                    onChange={() => onToggle(skillName, isActive)}
+                    onChange={() => onToggle(skillId, isActive)}
                   />
                 </div>
               </div>

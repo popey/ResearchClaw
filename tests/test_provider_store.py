@@ -96,3 +96,22 @@ def test_provider_store_legacy_single_model_populates_model_names(
     assert item is not None
     assert item.model_name == "gpt-4o"
     assert item.model_names == ["gpt-4o"]
+
+
+def test_provider_store_accepts_minimax_provider_type(tmp_path: Path):
+    store = ProviderStore(file_path=str(tmp_path / "providers.json"))
+
+    store.save_provider(
+        {
+            "name": "minimax-main",
+            "provider_type": "minimax",
+            "model_name": "MiniMax-M2.7",
+            "api_key": "sk-test",
+            "base_url": "https://api.minimax.io/v1",
+        },
+    )
+
+    item = store.get_provider("minimax-main")
+    assert item is not None
+    assert item.provider_type == "minimax"
+    assert item.model_name == "MiniMax-M2.7"
