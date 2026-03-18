@@ -191,7 +191,7 @@ User ─→ Console (Web UI) / CLI / Slack / Email
      ├── General Tools: Shell, File I/O, Browser, Memory Search
      ├── Skills: Paper Summarizer, Literature Review, Experiment Tracker, ...
      ├── Memory: Research Memory + Knowledge Base + Auto-compaction
-     ├── Model: OpenAI / Anthropic / DashScope / Local models
+     ├── Model: OpenAI / Anthropic / Gemini / DashScope / Local models
      └── Crons: Daily Paper Digest, Deadline Reminder, Citation Alerts
 ```
 
@@ -274,9 +274,14 @@ researchclaw models add openai --type openai --model gpt-4o --api-key sk-...
 # Or Anthropic
 researchclaw models add anthropic --type anthropic --model claude-3-5-sonnet --api-key sk-ant-...
 
+# Or Google Gemini (Gemini API / AI Studio key)
+researchclaw models add gemini --type gemini --model gemini-2.5-flash --api-key AIza... --base-url https://generativelanguage.googleapis.com/v1beta/openai/
+
 # Or use local models via Ollama
 researchclaw models add ollama --type ollama --model qwen3:8b --base-url http://localhost:11434/v1
 ```
+
+The web UI also includes a `Google Gemini` preset in the Models page.
 
 ## 🤖 Agent Commands
 

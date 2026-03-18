@@ -190,7 +190,7 @@ docker run -d \
      ├── 通用工具：Shell、文件 I/O、浏览器、记忆搜索
      ├── 技能：论文总结、文献综述、实验追踪……
      ├── 记忆：研究记忆 + 知识库 + 自动压缩
-     ├── 模型：OpenAI / Anthropic / DashScope / 本地模型
+     ├── 模型：OpenAI / Anthropic / Gemini / DashScope / 本地模型
      └── 定时任务：每日论文摘要、截止日提醒、引用提醒
 ```
 
@@ -270,9 +270,14 @@ researchclaw models add openai --type openai --model gpt-4o --api-key sk-...
 # Anthropic
 researchclaw models add anthropic --type anthropic --model claude-3-5-sonnet --api-key sk-ant-...
 
+# Google Gemini（Gemini API / AI Studio key）
+researchclaw models add gemini --type gemini --model gemini-2.5-flash --api-key AIza... --base-url https://generativelanguage.googleapis.com/v1beta/openai/
+
 # Ollama（本地模型）
 researchclaw models add ollama --type ollama --model qwen3:8b --base-url http://localhost:11434/v1
 ```
+
+前端“模型配置”页面现在也提供了 `Google Gemini` 预设。
 
 ## 🤖 聊天命令
 

@@ -115,3 +115,22 @@ def test_provider_store_accepts_minimax_provider_type(tmp_path: Path):
     assert item is not None
     assert item.provider_type == "minimax"
     assert item.model_name == "MiniMax-M2.7"
+
+
+def test_provider_store_accepts_gemini_provider_type(tmp_path: Path):
+    store = ProviderStore(file_path=str(tmp_path / "providers.json"))
+
+    store.save_provider(
+        {
+            "name": "gemini-main",
+            "provider_type": "gemini",
+            "model_name": "gemini-2.5-flash",
+            "api_key": "AIza-demo",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        },
+    )
+
+    item = store.get_provider("gemini-main")
+    assert item is not None
+    assert item.provider_type == "gemini"
+    assert item.model_name == "gemini-2.5-flash"

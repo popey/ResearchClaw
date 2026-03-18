@@ -46,7 +46,7 @@ def configure_provider_api_key_interactive(
     )
 
     provider_type = click.prompt(
-        "Provider type (openai/anthropic/dashscope/deepseek/minimax/ollama/custom)",
+        "Provider type (openai/anthropic/gemini/dashscope/deepseek/minimax/ollama/custom)",
         default=current_type,
     ).strip()
 

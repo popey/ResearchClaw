@@ -573,6 +573,10 @@ def _default_minimax_base_url(api_url: str | None, suffix: str) -> str:
     return f"{host}{suffix}"
 
 
+def _default_gemini_base_url() -> str:
+    return "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
 def create_model_and_formatter(
     llm_cfg: Optional[dict[str, Any]] = None,
 ) -> tuple[Any, Any]:
@@ -632,6 +636,7 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
         or llm_cfg.get("model_type", "openai_chat"),
     ).strip().lower()
     is_minimax = provider == "minimax"
+    is_gemini = provider == "gemini"
     is_minimax_coding_plan = _looks_like_minimax_coding_plan(
         provider,
         api_key,
@@ -653,6 +658,8 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
         api_url = _default_minimax_base_url(api_url, "/anthropic")
     elif is_minimax and not api_url:
         api_url = _default_minimax_base_url(api_url, "/v1")
+    elif is_gemini and not api_url:
+        api_url = _default_gemini_base_url()
 
     default_extra_body = {"reasoning_split": True} if is_minimax else None
 
@@ -683,7 +690,7 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
     # MiniMax's OpenAI-compatible format exposes reasoning via
     # reasoning_details. Use the direct OpenAI SDK path so we can preserve
     # those fields consistently for both sync and streaming tool use.
-    if is_minimax:
+    if is_minimax or is_gemini:
         try:
             from openai import OpenAI
 
@@ -701,7 +708,7 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
             return model, formatter
         except ImportError:
             raise ImportError(
-                "OpenAI SDK is required for MiniMax compatibility mode. "
+                "OpenAI SDK is required for OpenAI-compatible providers. "
                 "Install with: pip install openai",
             )
 

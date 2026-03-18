@@ -36,6 +36,7 @@ import { useI18n } from "../i18n";
 const PROVIDER_TYPES = [
   "openai",
   "anthropic",
+  "gemini",
   "ollama",
   "dashscope",
   "deepseek",
@@ -75,6 +76,20 @@ const PLATFORM_PRESETS: ProviderPreset[] = [
     base_url: "https://api.openai.com/v1",
     api_key_placeholder: "sk-...",
     model_names: ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "o4-mini"],
+  },
+  {
+    key: "gemini",
+    label: "Google Gemini",
+    description:
+      "Google 官方 OpenAI 兼容接口；使用 Gemini API key，Base URL 为 https://generativelanguage.googleapis.com/v1beta/openai/",
+    provider_type: "gemini",
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    api_key_placeholder: "AIza...",
+    model_names: [
+      "gemini-3-flash-preview",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+    ],
   },
   {
     key: "deepseek",

@@ -39,6 +39,7 @@ _LEGACY_PROVIDERS_JSON_CANDIDATES = (
 _ALLOWED_PROVIDER_TYPES = {
     "openai",
     "anthropic",
+    "gemini",
     "ollama",
     "dashscope",
     "deepseek",
