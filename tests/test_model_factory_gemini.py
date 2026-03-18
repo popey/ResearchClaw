@@ -31,7 +31,7 @@ def test_create_remote_model_defaults_gemini_openai_compatible_base_url(
             "model_type": "gemini",
             "model_name": "gemini-2.5-flash",
             "api_key": "AIza-demo",
-        }
+        },
     )
 
     assert isinstance(model, _OpenAIChatFallback)

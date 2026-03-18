@@ -4,7 +4,10 @@ from pathlib import Path
 from researchclaw.agents import skills_manager as sm
 
 
-def _configure_skill_env(monkeypatch, tmp_path: Path) -> tuple[Path, Path, Path]:
+def _configure_skill_env(
+    monkeypatch,
+    tmp_path: Path,
+) -> tuple[Path, Path, Path]:
     project = tmp_path / "project"
     project.mkdir()
     (project / ".git").mkdir()
@@ -110,7 +113,7 @@ def test_sync_active_to_customized_skips_external_standard_sources(
     saved = sm.sync_skills_from_active_to_customized()
 
     assert saved == 0
-    assert list(customized.iterdir()) == []
+    assert not list(customized.iterdir())
 
 
 def test_enable_and_disable_skill_accept_display_name(

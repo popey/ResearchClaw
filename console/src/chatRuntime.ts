@@ -132,9 +132,7 @@ function normalizeMessages(value: unknown): ChatMessage[] {
               skillId:
                 tc?.skillId === undefined ? undefined : String(tc.skillId),
               skillName:
-                tc?.skillName === undefined
-                  ? undefined
-                  : String(tc.skillName),
+                tc?.skillName === undefined ? undefined : String(tc.skillName),
             }))
           : undefined,
       };

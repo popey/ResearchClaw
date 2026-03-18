@@ -50,7 +50,7 @@ def test_anthropic_fallback_normalizes_tool_use_response():
                 name="search_notes",
                 input={"query": "rag"},
             ),
-        ]
+        ],
     )
     client = _FakeAnthropicClient(response)
     model = _AnthropicChatFallback(client=client, model_name="MiniMax-M2.7")
@@ -72,7 +72,7 @@ def test_anthropic_fallback_normalizes_tool_use_response():
                         "required": ["query"],
                     },
                 },
-            }
+            },
         ],
     )
 
@@ -90,7 +90,9 @@ def test_anthropic_fallback_normalizes_tool_use_response():
 
 
 def test_anthropic_fallback_converts_tool_result_history():
-    response = SimpleNamespace(content=[SimpleNamespace(type="text", text="done")])
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="done")],
+    )
     client = _FakeAnthropicClient(response)
     model = _AnthropicChatFallback(client=client, model_name="MiniMax-M2.7")
 
@@ -108,7 +110,7 @@ def test_anthropic_fallback_converts_tool_result_history():
                             "name": "search_notes",
                             "arguments": '{"query":"rag"}',
                         },
-                    }
+                    },
                 ],
             },
             {
@@ -116,7 +118,7 @@ def test_anthropic_fallback_converts_tool_result_history():
                 "tool_call_id": "call_1",
                 "content": "result body",
             },
-        ]
+        ],
     )
 
     call = client.messages.calls[0]
@@ -150,7 +152,7 @@ def test_create_remote_model_uses_auth_token_for_minimax_anthropic_transport(
             "model_name": "MiniMax-M2.7",
             "api_key": "sk-cp-demo",
             "api_url": "https://api.minimax.io/anthropic",
-        }
+        },
     )
 
     assert isinstance(model, _AnthropicChatFallback)

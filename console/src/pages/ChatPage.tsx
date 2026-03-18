@@ -578,7 +578,11 @@ function ExecutionTraceBlock({
                 {trace.name}
                 {currentTool ? ` · ${currentTool.name}` : ""}
               </span>
-              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {isExpanded ? (
+                <ChevronDown size={14} />
+              ) : (
+                <ChevronRight size={14} />
+              )}
             </div>
             {isExpanded && (
               <div className="skill-trace-details">

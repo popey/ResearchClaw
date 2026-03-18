@@ -133,8 +133,6 @@ class _OpenAIChatFallback:
                "name": str, "arguments": str}``
         - ``{"type": "done"}``
         """
-        import json as _json
-
         if self.collapse_system_messages:
             messages = self._collapse_system_messages(messages)
         kwargs.pop("stream", None)
@@ -249,7 +247,8 @@ class _AnthropicChatFallback:
         parts = [
             str(msg.get("content", "")).strip()
             for msg in messages
-            if msg.get("role") == "system" and str(msg.get("content", "")).strip()
+            if msg.get("role") == "system"
+            and str(msg.get("content", "")).strip()
         ]
         return "\n\n".join(parts) if parts else None
 
@@ -287,7 +286,7 @@ class _AnthropicChatFallback:
                     "name": name,
                     "description": str(fn.get("description", "") or ""),
                     "input_schema": fn.get("parameters", {"type": "object"}),
-                }
+                },
             )
         return out or None
 
@@ -304,7 +303,9 @@ class _AnthropicChatFallback:
                 continue
 
             if role == "user":
-                out.append({"role": "user", "content": str(msg.get("content", ""))})
+                out.append(
+                    {"role": "user", "content": str(msg.get("content", ""))},
+                )
                 continue
 
             if role == "assistant":
@@ -327,12 +328,14 @@ class _AnthropicChatFallback:
                             "id": str(tc.get("id", "") or ""),
                             "name": name,
                             "input": cls._json_loads_best_effort(
-                                fn.get("arguments", "{}")
+                                fn.get("arguments", "{}"),
                             ),
-                        }
+                        },
                     )
                 if content_blocks:
-                    out.append({"role": "assistant", "content": content_blocks})
+                    out.append(
+                        {"role": "assistant", "content": content_blocks},
+                    )
                 continue
 
             if role == "tool":
@@ -347,9 +350,9 @@ class _AnthropicChatFallback:
                                 "type": "tool_result",
                                 "tool_use_id": tool_use_id,
                                 "content": str(msg.get("content", "")),
-                            }
+                            },
                         ],
-                    }
+                    },
                 )
 
         return out
@@ -372,10 +375,14 @@ class _AnthropicChatFallback:
                 prev["content"] = f"{prev_content}\n\n{next_content}".strip()
             else:
                 prev_blocks = (
-                    list(prev_content) if isinstance(prev_content, list) else []
+                    list(prev_content)
+                    if isinstance(prev_content, list)
+                    else []
                 )
                 next_blocks = (
-                    list(next_content) if isinstance(next_content, list) else []
+                    list(next_content)
+                    if isinstance(next_content, list)
+                    else []
                 )
                 prev["content"] = [*prev_blocks, *next_blocks]
 
@@ -394,7 +401,7 @@ class _AnthropicChatFallback:
             "model": model_name,
             "max_tokens": int(kwargs.get("max_tokens") or max_tokens),
             "messages": cls._merge_adjacent_messages(
-                cls._to_anthropic_messages(messages)
+                cls._to_anthropic_messages(messages),
             ),
         }
         system = cls._combine_system_messages(messages)
@@ -437,10 +444,12 @@ class _AnthropicChatFallback:
                                 ensure_ascii=False,
                             ),
                         ),
-                    )
+                    ),
                 )
 
-        content = "\n".join(part for part in text_parts if part).strip() or None
+        content = (
+            "\n".join(part for part in text_parts if part).strip() or None
+        )
         reasoning = (
             "\n".join(part for part in thinking_parts if part).strip() or None
         )
@@ -630,11 +639,15 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
     model_name = llm_cfg.get("model_name", DEFAULT_MODEL_NAME)
     api_key = llm_cfg.get("api_key", "")
     api_url = llm_cfg.get("api_url", None)
-    provider = str(
-        llm_cfg.get("provider")
-        or llm_cfg.get("provider_type")
-        or llm_cfg.get("model_type", "openai_chat"),
-    ).strip().lower()
+    provider = (
+        str(
+            llm_cfg.get("provider")
+            or llm_cfg.get("provider_type")
+            or llm_cfg.get("model_type", "openai_chat"),
+        )
+        .strip()
+        .lower()
+    )
     is_minimax = provider == "minimax"
     is_gemini = provider == "gemini"
     is_minimax_coding_plan = _looks_like_minimax_coding_plan(
@@ -667,16 +680,16 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
         try:
             from anthropic import Anthropic
 
-            client_kwargs: dict[str, Any] = {}
+            anthropic_client_kwargs: dict[str, Any] = {}
             if is_minimax and "/anthropic" in str(api_url or "").lower():
-                client_kwargs["auth_token"] = api_key
+                anthropic_client_kwargs["auth_token"] = api_key
             else:
-                client_kwargs["api_key"] = api_key
+                anthropic_client_kwargs["api_key"] = api_key
             if api_url:
-                client_kwargs["base_url"] = api_url
+                anthropic_client_kwargs["base_url"] = api_url
 
             model = _AnthropicChatFallback(
-                client=Anthropic(**client_kwargs),
+                client=Anthropic(**anthropic_client_kwargs),
                 model_name=model_name,
             )
             formatter = _create_formatter(model)
@@ -694,12 +707,12 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
         try:
             from openai import OpenAI
 
-            client_kwargs: dict[str, Any] = {"api_key": api_key}
+            openai_client_kwargs: dict[str, Any] = {"api_key": api_key}
             if api_url:
-                client_kwargs["base_url"] = api_url
+                openai_client_kwargs["base_url"] = api_url
 
             model = _OpenAIChatFallback(
-                client=OpenAI(**client_kwargs),
+                client=OpenAI(**openai_client_kwargs),
                 model_name=model_name,
                 default_extra_body=default_extra_body,
                 collapse_system_messages=is_minimax,
@@ -740,12 +753,12 @@ def _create_remote_model(llm_cfg: dict[str, Any]) -> tuple[Any, Any]:
     try:
         from openai import OpenAI
 
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        fallback_client_kwargs: dict[str, Any] = {"api_key": api_key}
         if api_url:
-            client_kwargs["base_url"] = api_url
+            fallback_client_kwargs["base_url"] = api_url
 
         model = _OpenAIChatFallback(
-            client=OpenAI(**client_kwargs),
+            client=OpenAI(**fallback_client_kwargs),
             model_name=model_name,
             default_extra_body=default_extra_body,
             collapse_system_messages=is_minimax,

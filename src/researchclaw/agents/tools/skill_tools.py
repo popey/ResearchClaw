@@ -66,7 +66,10 @@ def skills_activate(
         skill_name,
         source,
     )
-    payload = SkillsManager().activate_skill(skill_name=skill_name, source=source)
+    payload = SkillsManager().activate_skill(
+        skill_name=skill_name,
+        source=source,
+    )
     if payload is None:
         logger.warning(
             "[Skill Activate] skill not found skill=%s source=%s",

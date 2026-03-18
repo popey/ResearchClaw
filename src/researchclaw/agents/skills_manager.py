@@ -252,10 +252,9 @@ def _iter_skill_dirs(base_dir: Path, *, require_skill_md: bool) -> List[Path]:
         if not skill_dir.is_dir() or skill_dir.name.startswith((".", "_")):
             continue
         has_skill_md = (skill_dir / "SKILL.md").is_file()
-        has_entrypoint = (
-            (skill_dir / "__init__.py").is_file()
-            or (skill_dir / "main.py").is_file()
-        )
+        has_entrypoint = (skill_dir / "__init__.py").is_file() or (
+            skill_dir / "main.py"
+        ).is_file()
         if require_skill_md and not has_skill_md:
             continue
         if not has_skill_md and not has_entrypoint:
@@ -301,7 +300,10 @@ def _discover_skill_sources(
     for project_root in project_roots:
         for subdir, scope in _PROJECT_SKILL_SUBDIRS:
             skill_root = project_root / subdir
-            for skill_dir in _iter_skill_dirs(skill_root, require_skill_md=True):
+            for skill_dir in _iter_skill_dirs(
+                skill_root,
+                require_skill_md=True,
+            ):
                 _record(skill_dir, scope, scope)
 
     return discovered
@@ -376,19 +378,26 @@ def _resolve_skill_dir_by_name(
 
     candidates: List[tuple[Path, str, str]] = []
     if source == "active":
-        candidates = [
-            (
-                Path(ACTIVE_SKILLS_DIR) / child.name,
-                "active",
-                "active",
-            )
-            for child in sorted(Path(ACTIVE_SKILLS_DIR).iterdir())
-            if child.is_dir() and not child.name.startswith((".", "_"))
-        ] if Path(ACTIVE_SKILLS_DIR).is_dir() else []
+        candidates = (
+            [
+                (
+                    Path(ACTIVE_SKILLS_DIR) / child.name,
+                    "active",
+                    "active",
+                )
+                for child in sorted(Path(ACTIVE_SKILLS_DIR).iterdir())
+                if child.is_dir() and not child.name.startswith((".", "_"))
+            ]
+            if Path(ACTIVE_SKILLS_DIR).is_dir()
+            else []
+        )
     elif source == "customized":
         base = Path(CUSTOMIZED_SKILLS_DIR)
         candidates = (
-            [(child, "customized", "user-native") for child in sorted(base.iterdir())]
+            [
+                (child, "customized", "user-native")
+                for child in sorted(base.iterdir())
+            ]
             if base.is_dir()
             else []
         )
@@ -505,7 +514,10 @@ def sync_skills_to_working_dir(
         dest = active_dir / name
         if dest.exists() and not force:
             manifest = _read_active_skill_manifest(dest)
-            if _is_directory_same(src, dest) and manifest.get("source") == source:
+            if (
+                _is_directory_same(src, dest)
+                and manifest.get("source") == source
+            ):
                 continue  # skip unchanged
         _copy_skill_to_active(
             src,
@@ -542,7 +554,10 @@ def sync_skills_from_active_to_customized(
 
         manifest = _read_active_skill_manifest(skill_dir)
         manifest_source = str(manifest.get("source", "")).strip().lower()
-        if manifest_source and manifest_source not in {"builtin", "customized"}:
+        if manifest_source and manifest_source not in {
+            "builtin",
+            "customized",
+        }:
             continue
 
         # Skip if identical to builtin (no user modifications)
@@ -877,7 +892,9 @@ def _read_skill_info(
     requires: Dict[str, Any] = {}
     triggers: List[str] = []
     diagnostics: List[str] = []
-    skill_format = "standard" if (skill_dir / "SKILL.md").exists() else "legacy"
+    skill_format = (
+        "standard" if (skill_dir / "SKILL.md").exists() else "legacy"
+    )
 
     # Try SKILL.md first (primary metadata source)
     skill_md = skill_dir / "SKILL.md"

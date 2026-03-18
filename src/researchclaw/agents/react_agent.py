@@ -340,8 +340,8 @@ class ScholarAgent:
                         "Loaded skill: %s (%d tools via %s)",
                         skill_dir.name,
                         len(runtime.tools),
-                            runtime.entrypoint or "unknown",
-                        )
+                        runtime.entrypoint or "unknown",
+                    )
         except Exception:
             logger.exception("Failed to load skill: %s", skill_dir.name)
 
@@ -821,7 +821,9 @@ class ScholarAgent:
             )
             self._last_skill_debug = selection_debug
             self._set_current_skill_events(selected_skills, selection_debug)
-            query_preview = " ".join((user_message or "").strip().split())[:160]
+            query_preview = " ".join((user_message or "").strip().split())[
+                :160
+            ]
             selected_names = [skill.name for skill in selected_skills]
             debug_details = selection_debug.get("details", [])
             if selected_names:
@@ -1211,7 +1213,9 @@ class ScholarAgent:
                                 parsed_args = raw_args
                             skill_meta = self._resolve_skill_meta_for_tool(
                                 event["name"],
-                                parsed_args if isinstance(parsed_args, dict) else {},
+                                parsed_args
+                                if isinstance(parsed_args, dict)
+                                else {},
                             )
                             yield {
                                 "type": "tool_call",
@@ -1272,7 +1276,9 @@ class ScholarAgent:
                                 tool_args = raw_args
                             skill_meta = self._resolve_skill_meta_for_tool(
                                 tool_name,
-                                tool_args if isinstance(tool_args, dict) else {},
+                                tool_args
+                                if isinstance(tool_args, dict)
+                                else {},
                             )
 
                             if tool_name in self._tools:

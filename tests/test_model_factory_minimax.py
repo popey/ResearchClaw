@@ -51,7 +51,11 @@ def test_openai_fallback_promotes_minimax_reasoning_details():
 
 
 def test_openai_fallback_merges_extra_body_without_losing_defaults():
-    message = SimpleNamespace(content="ok", tool_calls=[], reasoning_details=[])
+    message = SimpleNamespace(
+        content="ok",
+        tool_calls=[],
+        reasoning_details=[],
+    )
     response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
     client = _FakeClient(response)
     model = _OpenAIChatFallback(
@@ -98,7 +102,7 @@ def test_create_remote_model_keeps_openai_transport_for_coding_plan_v1(
             "model_name": "MiniMax-M2.7",
             "api_key": "sk-cp-demo",
             "api_url": "https://api.minimax.io/v1",
-        }
+        },
     )
 
     assert isinstance(model, _OpenAIChatFallback)
@@ -107,7 +111,11 @@ def test_create_remote_model_keeps_openai_transport_for_coding_plan_v1(
 
 
 def test_openai_fallback_can_collapse_multiple_system_messages():
-    message = SimpleNamespace(content="ok", tool_calls=[], reasoning_details=[])
+    message = SimpleNamespace(
+        content="ok",
+        tool_calls=[],
+        reasoning_details=[],
+    )
     response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
     client = _FakeClient(response)
     model = _OpenAIChatFallback(
@@ -121,7 +129,7 @@ def test_openai_fallback_can_collapse_multiple_system_messages():
             {"role": "system", "content": "sys1"},
             {"role": "system", "content": "sys2"},
             {"role": "user", "content": "hi"},
-        ]
+        ],
     )
 
     sent_messages = client.chat.completions.calls[0]["messages"]

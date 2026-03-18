@@ -1541,9 +1541,8 @@ class FeishuChannel(BaseChannel):
                     str(last_response.error),
                 )
                 err_text = (
-                    (send_meta.get("bot_prefix", "") or "")
-                    + f"Error: {err}"
-                )
+                    send_meta.get("bot_prefix", "") or ""
+                ) + f"Error: {err}"
                 await self._on_consume_error(request, to_handle, err_text)
             elif accumulated_parts:
                 await self.send_content_parts(

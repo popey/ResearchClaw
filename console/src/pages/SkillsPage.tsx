@@ -59,7 +59,9 @@ export default function SkillsPage() {
       skills.filter((skill, idx) => {
         const skillId = getSkillId(skill, idx);
         const skillName = getSkillName(skill, idx);
-        return `${skillId} ${skillName} ${skill.description || ""} ${skill.source || ""} ${skill.scope || ""} ${skill.format || ""} ${skill.path || ""}`
+        return `${skillId} ${skillName} ${skill.description || ""} ${
+          skill.source || ""
+        } ${skill.scope || ""} ${skill.format || ""} ${skill.path || ""}`
           .toLowerCase()
           .includes(normalizedQuery);
       }),
