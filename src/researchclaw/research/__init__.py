@@ -1,34 +1,47 @@
 """Research domain primitives for projects, workflows, notes, and evidence."""
 
 from .models import (
+    ArtifactRelation,
+    AuditEvent,
+    ExperimentProvenance,
     ExperimentExecutionCatalogEntry,
     ExperimentRunnerProfile,
     ExperimentRunnerRule,
     ExperimentRunnerTemplate,
+    ProjectMemoryEntry,
     ProactiveReminder,
     ResearchArtifact,
     ResearchClaim,
+    ResearchDatasetVersion,
     ResearchEvidence,
     ResearchNote,
     ResearchProject,
     ResearchState,
     ResearchWorkflow,
     WorkflowExecutionPolicy,
+    WorkflowCheckpoint,
     WORKFLOW_STAGES,
 )
 from .runtime import ResearchWorkflowRuntime
 from .service import ResearchService
-from .store import JsonResearchStore
+from .store import JsonResearchStore, SQLiteResearchStore, build_default_research_store
 
 __all__ = [
+    "ArtifactRelation",
+    "AuditEvent",
+    "ExperimentProvenance",
     "ExperimentRunnerProfile",
     "ExperimentRunnerRule",
     "ExperimentRunnerTemplate",
     "ExperimentExecutionCatalogEntry",
     "JsonResearchStore",
+    "SQLiteResearchStore",
+    "build_default_research_store",
+    "ProjectMemoryEntry",
     "ProactiveReminder",
     "ResearchArtifact",
     "ResearchClaim",
+    "ResearchDatasetVersion",
     "ResearchEvidence",
     "ResearchNote",
     "ResearchProject",
@@ -37,5 +50,6 @@ __all__ = [
     "ResearchWorkflow",
     "ResearchWorkflowRuntime",
     "WorkflowExecutionPolicy",
+    "WorkflowCheckpoint",
     "WORKFLOW_STAGES",
 ]

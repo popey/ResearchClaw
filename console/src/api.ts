@@ -8,15 +8,40 @@ import type {
   PaperItem,
   ProviderItem,
   PushMessage,
+  ResearchArtifactItem,
+  ResearchArtifactBulkUpdateResult,
+  ResearchArtifactLineage,
+  ResearchArtifactRelation,
+  ResearchAuditEvent,
   ResearchClaimGraph,
+  ResearchClaimBulkUpdateResult,
   ResearchClaimItem,
+  ResearchClosureActionBatchResult,
+  ResearchClosureActionItem,
+  ResearchClosureActionExecuteResult,
+  ResearchClosureMaterializeResult,
+  ResearchClosureReport,
   ResearchDashboard,
+  ResearchDatasetVersion,
+  ResearchDatasetVersionBulkUpdateResult,
+  ResearchEvidenceBulkUpdateResult,
+  ResearchEvidenceItem,
+  ResearchExperimentBulkUpdateResult,
+  ResearchExperimentItem,
+  ResearchExperimentReplayPlan,
+  ResearchNoteBulkUpdateResult,
+  ResearchNoteItem,
   ResearchOverview,
+  ResearchProjectMemoryEntry,
+  ResearchProjectMemoryBulkUpdateResult,
+  ResearchProjectBlockerItem,
   ResearchProjectBlockerBatchResult,
+  ResearchProjectPackageResult,
   ResearchProjectItem,
   ResearchReminderItem,
   ResearchWorkflowExecutionResult,
   ResearchWorkflowItem,
+  ResearchWorkflowCheckpoint,
   ResearchWorkflowRemediationBatchResult,
   ResearchWorkflowRemediationContext,
   ResearchWorkflowTaskActionResult,
@@ -149,6 +174,161 @@ export async function getResearchProjectDashboard(
   );
 }
 
+export async function getResearchProjectClosure(
+  projectId: string,
+): Promise<ResearchClosureReport> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/closure`,
+    "Research project closure request failed",
+  );
+}
+
+export async function listResearchProjectBlockers(
+  projectId: string,
+  params?: {
+    kind?: string;
+    status?: string;
+    stage?: string;
+    workflow_id?: string;
+    ready_for_retry?: boolean;
+    query?: string;
+    limit?: number;
+  },
+): Promise<ResearchProjectBlockerItem[]> {
+  return requestJson(
+    withQuery(
+      `/api/research/projects/${encodeURIComponent(projectId)}/blockers`,
+      {
+        kind: params?.kind,
+        status: params?.status,
+        stage: params?.stage,
+        workflow_id: params?.workflow_id,
+        ready_for_retry: params?.ready_for_retry,
+        query: params?.query,
+        limit: params?.limit ?? 40,
+      },
+    ),
+    "Research project blockers request failed",
+  );
+}
+
+export async function applyResearchProjectBlockers(
+  projectId: string,
+  payload: {
+    workflow_ids: string[];
+    mode?: string;
+    task_limit?: number;
+  },
+): Promise<ResearchProjectBlockerBatchResult> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/blockers/apply`,
+    "Research project blocker batch apply failed",
+    {
+      method: "POST",
+      body: {
+        workflow_ids: payload.workflow_ids,
+        mode: payload.mode ?? "dispatch",
+        task_limit: payload.task_limit ?? 2,
+      },
+    },
+  );
+}
+
+export async function materializeResearchProjectClosure(
+  projectId: string,
+  payload?: { limit?: number; action_kind?: string; target_id?: string },
+): Promise<ResearchClosureMaterializeResult> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/closure/materialize`,
+    "Research project closure materialization failed",
+    {
+      method: "POST",
+      body: {
+        limit: payload?.limit ?? 5,
+        action_kind: payload?.action_kind ?? "",
+        target_id: payload?.target_id ?? "",
+      },
+    },
+  );
+}
+
+export async function executeResearchProjectClosureAction(
+  projectId: string,
+  payload: { action_kind: string; target_id: string },
+): Promise<ResearchClosureActionExecuteResult> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/closure/execute`,
+    "Research project closure action execution failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function listResearchProjectClosureActions(
+  projectId: string,
+  params?: {
+    kind?: string;
+    severity?: string;
+    target_type?: string;
+    workflow_id?: string;
+    auto_executable?: boolean;
+    materializable?: boolean;
+    query?: string;
+    limit?: number;
+  },
+): Promise<ResearchClosureActionItem[]> {
+  return requestJson(
+    withQuery(
+      `/api/research/projects/${encodeURIComponent(projectId)}/closure/actions`,
+      {
+        kind: params?.kind,
+        severity: params?.severity,
+        target_type: params?.target_type,
+        workflow_id: params?.workflow_id,
+        auto_executable: params?.auto_executable,
+        materializable: params?.materializable,
+        query: params?.query,
+        limit: params?.limit ?? 40,
+      },
+    ),
+    "Research project closure actions request failed",
+  );
+}
+
+export async function applyResearchProjectClosureActions(
+  projectId: string,
+  payload: {
+    closure_keys: string[];
+    mode?: string;
+  },
+): Promise<ResearchClosureActionBatchResult> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/closure/actions/apply`,
+    "Research project closure batch action failed",
+    {
+      method: "POST",
+      body: {
+        closure_keys: payload.closure_keys,
+        mode: payload.mode ?? "execute",
+      },
+    },
+  );
+}
+
+export async function createResearchProjectPackage(
+  projectId: string,
+): Promise<ResearchProjectPackageResult> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/package`,
+    "Research project package creation failed",
+    {
+      method: "POST",
+    },
+  );
+}
+
 export async function listResearchWorkflows(
   projectId?: string,
 ): Promise<ResearchWorkflowItem[]> {
@@ -158,12 +338,214 @@ export async function listResearchWorkflows(
   );
 }
 
+export async function listResearchNotes(
+  params?: {
+    project_id?: string;
+    workflow_id?: string;
+    note_type?: string;
+    tag?: string;
+    claim_id?: string;
+    experiment_id?: string;
+    query?: string;
+    limit?: number;
+  },
+): Promise<ResearchNoteItem[]> {
+  return requestJson(
+    withQuery("/api/research/notes", {
+      project_id: params?.project_id,
+      workflow_id: params?.workflow_id,
+      note_type: params?.note_type,
+      tag: params?.tag,
+      claim_id: params?.claim_id,
+      experiment_id: params?.experiment_id,
+      query: params?.query,
+      limit: params?.limit ?? 40,
+    }),
+    "Research notes request failed",
+  );
+}
+
+export async function updateResearchNote(
+  noteId: string,
+  payload: {
+    title?: string;
+    content?: string;
+    note_type?: string;
+    workflow_id?: string;
+    experiment_ids?: string[];
+    claim_ids?: string[];
+    artifact_ids?: string[];
+    paper_refs?: string[];
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchNoteItem> {
+  return requestJson(
+    `/api/research/notes/${encodeURIComponent(noteId)}`,
+    "Research note update failed",
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export async function bulkUpdateResearchNotes(
+  payload: {
+    project_id: string;
+    note_ids: string[];
+    workflow_id?: string;
+    note_type?: string;
+    add_tags?: string[];
+    remove_tags?: string[];
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchNoteBulkUpdateResult> {
+  return requestJson(
+    "/api/research/notes/bulk-update",
+    "Research notes bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
 export async function listResearchClaims(
   projectId?: string,
+  params?: {
+    workflow_id?: string;
+    status?: string;
+    query?: string;
+    has_evidence?: boolean;
+    limit?: number;
+  },
 ): Promise<ResearchClaimItem[]> {
   return requestJson(
-    withQuery("/api/research/claims", { project_id: projectId }),
+    withQuery("/api/research/claims", {
+      project_id: projectId,
+      workflow_id: params?.workflow_id,
+      status: params?.status,
+      query: params?.query,
+      has_evidence: params?.has_evidence,
+      limit: params?.limit ?? 40,
+    }),
     "Research claims request failed",
+  );
+}
+
+export async function listResearchEvidences(
+  params?: {
+    project_id?: string;
+    workflow_id?: string;
+    claim_id?: string;
+    evidence_type?: string;
+    source_type?: string;
+    query?: string;
+    limit?: number;
+  },
+): Promise<ResearchEvidenceItem[]> {
+  return requestJson(
+    withQuery("/api/research/evidences", {
+      project_id: params?.project_id,
+      workflow_id: params?.workflow_id,
+      claim_id: params?.claim_id,
+      evidence_type: params?.evidence_type,
+      source_type: params?.source_type,
+      query: params?.query,
+      limit: params?.limit ?? 40,
+    }),
+    "Research evidences request failed",
+  );
+}
+
+export async function updateResearchEvidence(
+  evidenceId: string,
+  payload: {
+    summary?: string;
+    evidence_type?: string;
+    workflow_id?: string;
+    claim_ids?: string[];
+    artifact_id?: string;
+    note_id?: string;
+    experiment_id?: string;
+    source_type?: string;
+    source_id?: string;
+    title?: string;
+    locator?: string;
+    quote?: string;
+    url?: string;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchEvidenceItem> {
+  return requestJson(
+    `/api/research/evidences/${encodeURIComponent(evidenceId)}`,
+    "Research evidence update failed",
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export async function bulkUpdateResearchEvidences(
+  payload: {
+    project_id: string;
+    evidence_ids: string[];
+    workflow_id?: string;
+    evidence_type?: string;
+    source_type?: string;
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchEvidenceBulkUpdateResult> {
+  return requestJson(
+    "/api/research/evidences/bulk-update",
+    "Research evidences bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function updateResearchClaim(
+  claimId: string,
+  payload: {
+    text?: string;
+    status?: string;
+    workflow_id?: string;
+    confidence?: number | null;
+    note_ids?: string[];
+    artifact_ids?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchClaimItem> {
+  return requestJson(
+    `/api/research/claims/${encodeURIComponent(claimId)}`,
+    "Research claim update failed",
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export async function bulkUpdateResearchClaims(
+  payload: {
+    project_id: string;
+    claim_ids: string[];
+    status?: string;
+    workflow_id?: string;
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchClaimBulkUpdateResult> {
+  return requestJson(
+    "/api/research/claims/bulk-update",
+    "Research claim bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
   );
 }
 
@@ -173,6 +555,379 @@ export async function getResearchClaimGraph(
   return requestJson(
     `/api/research/claims/${encodeURIComponent(claimId)}/graph`,
     "Claim graph request failed",
+  );
+}
+
+export async function listResearchProjectMemory(
+  projectId: string,
+  params?: {
+    workflow_id?: string;
+    entry_kind?: string;
+    status?: string;
+    stage?: string;
+    tag?: string;
+    query?: string;
+    limit?: number;
+  },
+): Promise<ResearchProjectMemoryEntry[]> {
+  return requestJson(
+    withQuery(
+      `/api/research/projects/${encodeURIComponent(projectId)}/memory`,
+      {
+        workflow_id: params?.workflow_id,
+        entry_kind: params?.entry_kind,
+        status: params?.status,
+        stage: params?.stage,
+        tag: params?.tag,
+        query: params?.query,
+        limit: params?.limit ?? 20,
+      },
+    ),
+    "Research project memory request failed",
+  );
+}
+
+export async function createResearchProjectMemory(
+  projectId: string,
+  payload: {
+    title: string;
+    content: string;
+    entry_kind?: string;
+    workflow_id?: string;
+    stage?: string;
+    status?: string;
+    note_ids?: string[];
+    claim_ids?: string[];
+    artifact_ids?: string[];
+    experiment_ids?: string[];
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchProjectMemoryEntry> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/memory`,
+    "Research project memory creation failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function updateResearchProjectMemory(
+  projectId: string,
+  memoryId: string,
+  payload: {
+    title?: string;
+    content?: string;
+    entry_kind?: string;
+    workflow_id?: string;
+    stage?: string;
+    status?: string;
+    note_ids?: string[];
+    claim_ids?: string[];
+    artifact_ids?: string[];
+    experiment_ids?: string[];
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchProjectMemoryEntry> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/memory/${encodeURIComponent(memoryId)}`,
+    "Research project memory update failed",
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export async function bulkUpdateResearchProjectMemory(
+  projectId: string,
+  payload: {
+    memory_ids: string[];
+    status?: string;
+    entry_kind?: string;
+    workflow_id?: string;
+    stage?: string;
+    add_tags?: string[];
+    remove_tags?: string[];
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchProjectMemoryBulkUpdateResult> {
+  return requestJson(
+    `/api/research/projects/${encodeURIComponent(projectId)}/memory/bulk-update`,
+    "Research project memory bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function listResearchAuditEvents(
+  projectId: string,
+  params?: {
+    workflow_id?: string;
+    entity_type?: string;
+    entity_id?: string;
+    limit?: number;
+  },
+): Promise<ResearchAuditEvent[]> {
+  return requestJson(
+    withQuery(
+      `/api/research/projects/${encodeURIComponent(projectId)}/audit`,
+      {
+        workflow_id: params?.workflow_id,
+        entity_type: params?.entity_type,
+        entity_id: params?.entity_id,
+        limit: params?.limit ?? 30,
+      },
+    ),
+    "Research audit request failed",
+  );
+}
+
+export async function listResearchDatasetVersions(
+  projectId?: string,
+  params?: {
+    workflow_id?: string;
+    name?: string;
+    name_query?: string;
+    tag?: string;
+    parent_version_id?: string;
+    limit?: number;
+  },
+): Promise<ResearchDatasetVersion[]> {
+  return requestJson(
+    withQuery("/api/research/dataset-versions", {
+      project_id: projectId,
+      workflow_id: params?.workflow_id,
+      name: params?.name,
+      name_query: params?.name_query,
+      tag: params?.tag,
+      parent_version_id: params?.parent_version_id,
+      limit: params?.limit ?? 20,
+    }),
+    "Research dataset versions request failed",
+  );
+}
+
+export async function createResearchDatasetVersion(
+  payload: {
+    project_id: string;
+    name: string;
+    version_label?: string;
+    description?: string;
+    workflow_id?: string;
+    path?: string;
+    source_paths?: string[];
+    parent_version_id?: string;
+    split_spec?: Record<string, unknown>;
+    transform_steps?: Array<Record<string, unknown>>;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchDatasetVersion> {
+  return requestJson(
+    "/api/research/dataset-versions",
+    "Research dataset version creation failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function updateResearchDatasetVersion(
+  datasetVersionId: string,
+  payload: {
+    name?: string;
+    version_label?: string;
+    description?: string;
+    workflow_id?: string;
+    path?: string;
+    source_paths?: string[];
+    parent_version_id?: string;
+    split_spec?: Record<string, unknown>;
+    transform_steps?: Array<Record<string, unknown>>;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchDatasetVersion> {
+  return requestJson(
+    `/api/research/dataset-versions/${encodeURIComponent(datasetVersionId)}`,
+    "Research dataset version update failed",
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export async function bulkUpdateResearchDatasetVersions(
+  payload: {
+    project_id: string;
+    dataset_version_ids: string[];
+    workflow_id?: string;
+    add_tags?: string[];
+    remove_tags?: string[];
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchDatasetVersionBulkUpdateResult> {
+  return requestJson(
+    "/api/research/dataset-versions/bulk-update",
+    "Research dataset version bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function listResearchExperiments(
+  projectId?: string,
+  params?: {
+    workflow_id?: string;
+    status?: string;
+    execution_mode?: string;
+    query?: string;
+    replayable?: boolean;
+    limit?: number;
+  },
+): Promise<ResearchExperimentItem[]> {
+  return requestJson(
+    withQuery("/api/research/experiments", {
+      project_id: projectId,
+      workflow_id: params?.workflow_id,
+      status: params?.status,
+      execution_mode: params?.execution_mode,
+      query: params?.query,
+      replayable: params?.replayable,
+      limit: params?.limit ?? 20,
+    }),
+    "Research experiments request failed",
+  );
+}
+
+export async function bulkUpdateResearchExperiments(
+  payload: {
+    project_id: string;
+    experiment_ids: string[];
+    workflow_id?: string;
+    status?: string;
+    comparison_group?: string;
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchExperimentBulkUpdateResult> {
+  return requestJson(
+    "/api/research/experiments/bulk-update",
+    "Research experiments bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function listResearchArtifacts(
+  projectId?: string,
+  params?: {
+    workflow_id?: string;
+    artifact_type?: string;
+    source_type?: string;
+    query?: string;
+    limit?: number;
+  },
+): Promise<ResearchArtifactItem[]> {
+  return requestJson(
+    withQuery("/api/research/artifacts", {
+      project_id: projectId,
+      workflow_id: params?.workflow_id,
+      artifact_type: params?.artifact_type,
+      source_type: params?.source_type,
+      query: params?.query,
+      limit: params?.limit ?? 30,
+    }),
+    "Research artifacts request failed",
+  );
+}
+
+export async function updateResearchArtifact(
+  artifactId: string,
+  payload: {
+    title?: string;
+    artifact_type?: string;
+    workflow_id?: string;
+    description?: string;
+    path?: string;
+    uri?: string;
+    source_type?: string;
+    source_id?: string;
+    experiment_id?: string;
+    note_ids?: string[];
+    claim_ids?: string[];
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ResearchArtifactItem> {
+  return requestJson(
+    `/api/research/artifacts/${encodeURIComponent(artifactId)}`,
+    "Research artifact update failed",
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export async function bulkUpdateResearchArtifacts(
+  payload: {
+    project_id: string;
+    artifact_ids: string[];
+    workflow_id?: string;
+    source_type?: string;
+    metadata_patch?: Record<string, unknown>;
+  },
+): Promise<ResearchArtifactBulkUpdateResult> {
+  return requestJson(
+    "/api/research/artifacts/bulk-update",
+    "Research artifact bulk update failed",
+    {
+      method: "POST",
+      body: payload,
+    },
+  );
+}
+
+export async function listResearchArtifactRelations(
+  params?: {
+    project_id?: string;
+    artifact_id?: string;
+    relation_type?: string;
+    limit?: number;
+  },
+): Promise<ResearchArtifactRelation[]> {
+  return requestJson(
+    withQuery("/api/research/artifact-relations", {
+      project_id: params?.project_id,
+      artifact_id: params?.artifact_id,
+      relation_type: params?.relation_type,
+      limit: params?.limit ?? 30,
+    }),
+    "Research artifact relations request failed",
+  );
+}
+
+export async function getResearchArtifactLineage(
+  artifactId: string,
+  direction = "both",
+): Promise<ResearchArtifactLineage> {
+  return requestJson(
+    withQuery(
+      `/api/research/artifacts/${encodeURIComponent(artifactId)}/lineage`,
+      { direction },
+    ),
+    "Research artifact lineage request failed",
   );
 }
 
@@ -198,6 +953,54 @@ export async function executeResearchWorkflow(
         agent_id: payload?.agent_id ?? "",
         session_id: payload?.session_id ?? "",
       },
+    },
+  );
+}
+
+export async function listResearchWorkflowCheckpoints(
+  workflowId: string,
+  limit = 20,
+): Promise<ResearchWorkflowCheckpoint[]> {
+  return requestJson(
+    withQuery(
+      `/api/research/workflows/${encodeURIComponent(workflowId)}/checkpoints`,
+      { limit },
+    ),
+    "Research workflow checkpoints request failed",
+  );
+}
+
+export async function restoreResearchWorkflowCheckpoint(
+  workflowId: string,
+  checkpointId: string,
+): Promise<ResearchWorkflowItem> {
+  return requestJson(
+    `/api/research/workflows/${encodeURIComponent(workflowId)}/restore`,
+    "Research workflow restore failed",
+    {
+      method: "POST",
+      body: { checkpoint_id: checkpointId },
+    },
+  );
+}
+
+export async function getResearchExperimentReplayPlan(
+  experimentId: string,
+): Promise<ResearchExperimentReplayPlan> {
+  return requestJson(
+    `/api/research/experiments/${encodeURIComponent(experimentId)}/replay-plan`,
+    "Research experiment replay plan request failed",
+  );
+}
+
+export async function replayResearchExperiment(
+  experimentId: string,
+): Promise<Record<string, unknown>> {
+  return requestJson(
+    `/api/research/experiments/${encodeURIComponent(experimentId)}/replay`,
+    "Research experiment replay failed",
+    {
+      method: "POST",
     },
   );
 }

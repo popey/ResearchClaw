@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -223,6 +224,999 @@ def test_research_router_workflow_execute(tmp_path) -> None:
     assert runner.calls[0]["session_id"] == "research:exec-test"
 
 
+def test_research_router_updates_memory_and_dataset_versions(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    dataset_file = tmp_path / "train.jsonl"
+    dataset_file.write_text('{"text":"sample"}\n', encoding="utf-8")
+    validation_file = tmp_path / "dev.jsonl"
+    validation_file.write_text('{"text":"validation"}\n', encoding="utf-8")
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Mutable State Project"},
+    ).json()
+    workflow = client.post(
+        "/api/research/workflows",
+        json={
+            "project_id": project["id"],
+            "title": "Mutable workflow",
+        },
+    ).json()
+
+    memory = client.post(
+        f"/api/research/projects/{project['id']}/memory",
+        json={
+            "title": "Initial decision",
+            "content": "Keep the baseline setup minimal.",
+            "entry_kind": "decision",
+            "workflow_id": workflow["id"],
+            "stage": "experiment_plan",
+            "tags": ["baseline"],
+            "metadata": {"source": "router-test"},
+        },
+    ).json()
+    updated_memory = client.patch(
+        f"/api/research/projects/{project['id']}/memory/{memory['id']}",
+        json={
+            "title": "Updated decision",
+            "content": "Keep the baseline minimal and track the revised split.",
+            "stage": "experiment_run",
+            "tags": ["baseline", "locked"],
+            "metadata": {"source": "console"},
+        },
+    ).json()
+
+    dataset_version = client.post(
+        "/api/research/dataset-versions",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "name": "benchmark",
+            "version_label": "v1",
+            "source_paths": [str(dataset_file)],
+            "split_spec": {"train": "train.jsonl"},
+            "metadata": {"primary_metric": "accuracy"},
+        },
+    ).json()
+    updated_dataset_version = client.patch(
+        f"/api/research/dataset-versions/{dataset_version['id']}",
+        json={
+            "version_label": "v2",
+            "description": "Add validation coverage.",
+            "source_paths": [str(dataset_file), str(validation_file)],
+            "split_spec": {
+                "train": "train.jsonl",
+                "validation": "dev.jsonl",
+            },
+            "metadata": {"primary_metric": "f1"},
+            "tags": ["validated"],
+        },
+    ).json()
+
+    audit_events = client.get(
+        f"/api/research/projects/{project['id']}/audit",
+        params={"limit": 50},
+    ).json()
+    audit_actions = {(item["entity_type"], item["action"]) for item in audit_events}
+
+    assert updated_memory["title"] == "Updated decision"
+    assert updated_memory["stage"] == "experiment_run"
+    assert updated_memory["tags"] == ["baseline", "locked"]
+    assert updated_memory["metadata"]["source"] == "console"
+    assert updated_dataset_version["version_label"] == "v2"
+    assert updated_dataset_version["metadata"]["primary_metric"] == "f1"
+    assert updated_dataset_version["split_spec"]["validation"] == "dev.jsonl"
+    assert str(validation_file) in updated_dataset_version["file_hashes"]
+    assert ("memory", "update") in audit_actions
+    assert ("dataset_version", "update") in audit_actions
+
+
+def test_research_router_filters_and_bulk_updates_memory_and_datasets(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Bulk Asset Project"},
+    ).json()
+    workflow_a = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow A"},
+    ).json()
+    workflow_b = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow B"},
+    ).json()
+
+    memory_a = client.post(
+        f"/api/research/projects/{project['id']}/memory",
+        json={
+            "title": "Baseline risk",
+            "content": "Baseline variance remains unresolved.",
+            "entry_kind": "open_question",
+            "workflow_id": workflow_a["id"],
+            "status": "active",
+            "stage": "paper_reading",
+            "tags": ["todo", "baseline"],
+        },
+    ).json()
+    memory_b = client.post(
+        f"/api/research/projects/{project['id']}/memory",
+        json={
+            "title": "Benchmark lock",
+            "content": "Lock the benchmark protocol before experiments.",
+            "entry_kind": "decision",
+            "workflow_id": workflow_a["id"],
+            "status": "active",
+            "stage": "experiment_plan",
+            "tags": ["todo"],
+        },
+    ).json()
+
+    filtered_memory = client.get(
+        f"/api/research/projects/{project['id']}/memory",
+        params={"status": "active", "tag": "todo", "query": "baseline", "limit": 10},
+    ).json()
+    assert [item["id"] for item in filtered_memory] == [memory_a["id"]]
+
+    memory_bulk = client.post(
+        f"/api/research/projects/{project['id']}/memory/bulk-update",
+        json={
+            "memory_ids": [memory_a["id"], memory_b["id"]],
+            "status": "resolved",
+            "workflow_id": workflow_b["id"],
+            "add_tags": ["triaged"],
+            "remove_tags": ["todo"],
+            "metadata_patch": {"owner": "console"},
+        },
+    ).json()
+    assert memory_bulk["updated_count"] == 2
+
+    dataset_a = client.post(
+        "/api/research/dataset-versions",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "name": "benchmark",
+            "version_label": "v1",
+            "description": "Raw benchmark corpus.",
+            "tags": ["raw"],
+        },
+    ).json()
+    dataset_b = client.post(
+        "/api/research/dataset-versions",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "name": "benchmark",
+            "version_label": "v2",
+            "description": "Normalized benchmark corpus.",
+            "parent_version_id": dataset_a["id"],
+            "tags": ["derived"],
+        },
+    ).json()
+
+    filtered_datasets = client.get(
+        "/api/research/dataset-versions",
+        params={
+            "project_id": project["id"],
+            "name_query": "bench",
+            "tag": "derived",
+            "parent_version_id": dataset_a["id"],
+            "limit": 10,
+        },
+    ).json()
+    assert [item["id"] for item in filtered_datasets] == [dataset_b["id"]]
+
+    dataset_bulk = client.post(
+        "/api/research/dataset-versions/bulk-update",
+        json={
+            "project_id": project["id"],
+            "dataset_version_ids": [dataset_a["id"], dataset_b["id"]],
+            "workflow_id": workflow_b["id"],
+            "add_tags": ["reviewed"],
+            "remove_tags": ["raw"],
+            "metadata_patch": {"owner": "console"},
+        },
+    ).json()
+    assert dataset_bulk["updated_count"] == 2
+
+    reviewed_datasets = client.get(
+        "/api/research/dataset-versions",
+        params={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "tag": "reviewed",
+            "name_query": "bench",
+            "limit": 10,
+        },
+    ).json()
+    assert {item["id"] for item in reviewed_datasets} >= {
+        dataset_a["id"],
+        dataset_b["id"],
+    }
+    dataset_a_after = next(item for item in reviewed_datasets if item["id"] == dataset_a["id"])
+    assert "raw" not in dataset_a_after["tags"]
+    assert dataset_a_after["metadata"]["owner"] == "console"
+
+
+def test_research_router_claim_and_artifact_filters_and_bulk_updates(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Claim Artifact Router Project"},
+    ).json()
+    workflow_a = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow A"},
+    ).json()
+    workflow_b = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow B"},
+    ).json()
+
+    artifact_a = client.post(
+        "/api/research/artifacts",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "title": "Seed paper",
+            "artifact_type": "paper",
+            "source_type": "semantic_scholar",
+            "source_id": "paper-1",
+        },
+    ).json()
+    artifact_b = client.post(
+        "/api/research/artifacts",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "title": "Failure analysis memo",
+            "artifact_type": "analysis",
+            "description": "Detailed benchmark review.",
+            "source_type": "generated",
+            "source_id": "analysis-1",
+        },
+    ).json()
+    client.post(
+        "/api/research/artifacts",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "title": "Draft appendix",
+            "artifact_type": "draft",
+            "source_type": "manual",
+            "source_id": "draft-1",
+        },
+    )
+
+    claim_a = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "text": "The method improves F1 on the benchmark.",
+            "status": "draft",
+            "artifact_ids": [artifact_a["id"]],
+        },
+    ).json()
+    claim_b = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "text": "The error analysis still needs follow-up.",
+            "status": "needs_review",
+            "artifact_ids": [artifact_b["id"]],
+        },
+    ).json()
+    client.post(
+        "/api/research/evidences",
+        json={
+            "project_id": project["id"],
+            "claim_ids": [claim_a["id"]],
+            "workflow_id": workflow_a["id"],
+            "artifact_id": artifact_a["id"],
+            "evidence_type": "paper",
+            "summary": "Reported benchmark gains in the seed paper.",
+            "source_type": "paper",
+            "source_id": "paper-1",
+            "title": "Seed paper",
+            "locator": "p.4",
+        },
+    )
+
+    filtered_claims = client.get(
+        "/api/research/claims",
+        params={
+            "project_id": project["id"],
+            "status": "draft",
+            "query": "benchmark",
+            "has_evidence": True,
+            "limit": 10,
+        },
+    ).json()
+    assert [item["id"] for item in filtered_claims] == [claim_a["id"]]
+
+    updated_claim = client.patch(
+        f"/api/research/claims/{claim_b['id']}",
+        json={
+            "workflow_id": workflow_b["id"],
+            "status": "disputed",
+            "metadata": {"reviewer": "console"},
+        },
+    ).json()
+    assert updated_claim["workflow_id"] == workflow_b["id"]
+    assert updated_claim["status"] == "disputed"
+    assert updated_claim["metadata"]["reviewer"] == "console"
+
+    claim_bulk = client.post(
+        "/api/research/claims/bulk-update",
+        json={
+            "project_id": project["id"],
+            "claim_ids": [claim_a["id"], claim_b["id"]],
+            "status": "supported",
+            "workflow_id": workflow_b["id"],
+            "metadata_patch": {"owner": "console"},
+        },
+    ).json()
+    assert claim_bulk["updated_count"] == 2
+
+    supported_claims = client.get(
+        "/api/research/claims",
+        params={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "status": "supported",
+            "limit": 10,
+        },
+    ).json()
+    assert {item["id"] for item in supported_claims} >= {
+        claim_a["id"],
+        claim_b["id"],
+    }
+
+    filtered_artifacts = client.get(
+        "/api/research/artifacts",
+        params={
+            "project_id": project["id"],
+            "artifact_type": "analysis",
+            "source_type": "generated",
+            "query": "memo",
+            "limit": 10,
+        },
+    ).json()
+    assert [item["id"] for item in filtered_artifacts] == [artifact_b["id"]]
+
+    updated_artifact = client.patch(
+        f"/api/research/artifacts/{artifact_a['id']}",
+        json={
+            "workflow_id": workflow_b["id"],
+            "source_type": "cataloged",
+            "metadata": {"owner": "console"},
+        },
+    ).json()
+    assert updated_artifact["workflow_id"] == workflow_b["id"]
+    assert updated_artifact["source_type"] == "cataloged"
+    assert updated_artifact["metadata"]["owner"] == "console"
+
+    artifact_bulk = client.post(
+        "/api/research/artifacts/bulk-update",
+        json={
+            "project_id": project["id"],
+            "artifact_ids": [artifact_a["id"], artifact_b["id"]],
+            "workflow_id": workflow_b["id"],
+            "source_type": "cataloged",
+            "metadata_patch": {"reviewed": True},
+        },
+    ).json()
+    assert artifact_bulk["updated_count"] == 2
+
+    cataloged_artifacts = client.get(
+        "/api/research/artifacts",
+        params={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "source_type": "cataloged",
+            "limit": 10,
+        },
+    ).json()
+    assert {item["id"] for item in cataloged_artifacts} >= {
+        artifact_a["id"],
+        artifact_b["id"],
+    }
+    assert all(item["metadata"]["reviewed"] is True for item in cataloged_artifacts)
+
+
+def test_research_router_note_and_evidence_filters_and_bulk_updates(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Note Evidence Router Project"},
+    ).json()
+    workflow_a = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow A"},
+    ).json()
+    workflow_b = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow B"},
+    ).json()
+    claim = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "text": "The benchmark improves under the new setup.",
+            "status": "draft",
+        },
+    ).json()
+
+    note_a = client.post(
+        "/api/research/notes",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "title": "Benchmark reading",
+            "content": "The seed paper reports benchmark gains.",
+            "note_type": "paper_note",
+            "claim_ids": [claim["id"]],
+            "paper_refs": ["Paper:seed-1"],
+            "tags": ["seed", "important"],
+        },
+    ).json()
+    note_b = client.post(
+        "/api/research/notes",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "title": "Run log",
+            "content": "Need to convert this into a writing-ready note.",
+            "note_type": "experiment_note",
+            "tags": ["todo"],
+        },
+    ).json()
+
+    filtered_notes = client.get(
+        "/api/research/notes",
+        params={
+            "project_id": project["id"],
+            "note_type": "paper_note",
+            "tag": "seed",
+            "query": "benchmark",
+            "limit": 10,
+        },
+    ).json()
+    assert [item["id"] for item in filtered_notes] == [note_a["id"]]
+
+    updated_note = client.patch(
+        f"/api/research/notes/{note_b['id']}",
+        json={
+            "workflow_id": workflow_b["id"],
+            "note_type": "writing_note",
+            "tags": ["draft", "todo"],
+            "metadata": {"owner": "console"},
+        },
+    ).json()
+    assert updated_note["workflow_id"] == workflow_b["id"]
+    assert updated_note["note_type"] == "writing_note"
+    assert updated_note["metadata"]["owner"] == "console"
+
+    note_bulk = client.post(
+        "/api/research/notes/bulk-update",
+        json={
+            "project_id": project["id"],
+            "note_ids": [note_a["id"], note_b["id"]],
+            "workflow_id": workflow_b["id"],
+            "note_type": "writing_note",
+            "add_tags": ["reviewed"],
+            "remove_tags": ["todo"],
+            "metadata_patch": {"source": "console"},
+        },
+    ).json()
+    assert note_bulk["updated_count"] == 2
+
+    reviewed_notes = client.get(
+        "/api/research/notes",
+        params={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "note_type": "writing_note",
+            "tag": "reviewed",
+            "limit": 10,
+        },
+    ).json()
+    assert {item["id"] for item in reviewed_notes} >= {
+        note_a["id"],
+        note_b["id"],
+    }
+
+    evidence_a = client.post(
+        "/api/research/evidences",
+        json={
+            "project_id": project["id"],
+            "claim_ids": [claim["id"]],
+            "workflow_id": workflow_a["id"],
+            "note_id": note_a["id"],
+            "evidence_type": "paper",
+            "summary": "Benchmark gains are reported in the seed paper.",
+            "source_type": "paper",
+            "source_id": "paper-1",
+            "title": "Seed paper",
+            "locator": "p.3",
+        },
+    ).json()
+    evidence_b = client.post(
+        "/api/research/evidences",
+        json={
+            "project_id": project["id"],
+            "claim_ids": [claim["id"]],
+            "workflow_id": workflow_a["id"],
+            "note_id": note_b["id"],
+            "evidence_type": "note",
+            "summary": "Internal note captures the experimental caveat.",
+            "source_type": "note",
+            "source_id": note_b["id"],
+            "title": "Run log",
+        },
+    ).json()
+
+    filtered_evidences = client.get(
+        "/api/research/evidences",
+        params={
+            "project_id": project["id"],
+            "claim_id": claim["id"],
+            "evidence_type": "paper",
+            "source_type": "paper",
+            "query": "benchmark",
+            "limit": 10,
+        },
+    ).json()
+    assert [item["id"] for item in filtered_evidences] == [evidence_a["id"]]
+
+    updated_evidence = client.patch(
+        f"/api/research/evidences/{evidence_b['id']}",
+        json={
+            "workflow_id": workflow_b["id"],
+            "evidence_type": "artifact",
+            "source_type": "artifact",
+            "metadata": {"owner": "console"},
+        },
+    ).json()
+    assert updated_evidence["workflow_id"] == workflow_b["id"]
+    assert updated_evidence["evidence_type"] == "artifact"
+    assert updated_evidence["source"]["source_type"] == "artifact"
+    assert updated_evidence["metadata"]["owner"] == "console"
+
+    evidence_bulk = client.post(
+        "/api/research/evidences/bulk-update",
+        json={
+            "project_id": project["id"],
+            "evidence_ids": [evidence_a["id"], evidence_b["id"]],
+            "workflow_id": workflow_b["id"],
+            "evidence_type": "note",
+            "source_type": "note",
+            "metadata_patch": {"reviewed": True},
+        },
+    ).json()
+    assert evidence_bulk["updated_count"] == 2
+
+    reviewed_evidences = client.get(
+        "/api/research/evidences",
+        params={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "evidence_type": "note",
+            "source_type": "note",
+            "limit": 10,
+        },
+    ).json()
+    assert {item["id"] for item in reviewed_evidences} >= {
+        evidence_a["id"],
+        evidence_b["id"],
+    }
+    assert all(item["metadata"]["reviewed"] is True for item in reviewed_evidences)
+
+
+def test_research_router_experiment_filters_and_bulk_updates(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Experiment Router Control Project"},
+    ).json()
+    workflow_a = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow A"},
+    ).json()
+    workflow_b = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Workflow B"},
+    ).json()
+    dataset = client.post(
+        "/api/research/dataset-versions",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "name": "benchmark",
+            "version_label": "v1",
+        },
+    ).json()
+
+    experiment_a = client.post(
+        "/api/research/experiments",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "name": "baseline sweep",
+            "status": "planned",
+            "comparison_group": "baseline",
+            "dataset_version_ids": [dataset["id"]],
+        },
+    ).json()
+    experiment_b = client.post(
+        "/api/research/experiments",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow_a["id"],
+            "name": "benchmark replay run",
+            "status": "completed",
+            "comparison_group": "ablation",
+            "dataset_version_ids": [dataset["id"]],
+            "metrics": {"accuracy": 0.93},
+            "notes": "benchmark contract rehearsal",
+        },
+    ).json()
+    client.patch(
+        f"/api/research/experiments/{experiment_b['id']}/execution",
+        json={
+            "mode": "command",
+            "result_bundle_schema": "paper_bundle.v1",
+        },
+    )
+
+    filtered_experiments = client.get(
+        "/api/research/experiments",
+        params={
+            "project_id": project["id"],
+            "status": "completed",
+            "execution_mode": "command",
+            "replayable": True,
+            "query": "benchmark",
+            "limit": 10,
+        },
+    ).json()
+    assert [item["id"] for item in filtered_experiments] == [experiment_b["id"]]
+
+    updated_experiment = client.patch(
+        f"/api/research/experiments/{experiment_a['id']}",
+        json={
+            "workflow_id": workflow_b["id"],
+            "status": "running",
+            "comparison_group": "pilot",
+            "metadata": {"owner": "console"},
+        },
+    ).json()
+    assert updated_experiment["workflow_id"] == workflow_b["id"]
+    assert updated_experiment["status"] == "running"
+    assert updated_experiment["comparison_group"] == "pilot"
+    assert updated_experiment["metadata"]["owner"] == "console"
+
+    experiment_bulk = client.post(
+        "/api/research/experiments/bulk-update",
+        json={
+            "project_id": project["id"],
+            "experiment_ids": [experiment_a["id"], experiment_b["id"]],
+            "workflow_id": workflow_b["id"],
+            "status": "completed",
+            "comparison_group": "primary",
+            "metadata_patch": {"reviewed": True},
+        },
+    ).json()
+    assert experiment_bulk["updated_count"] == 2
+
+    reviewed_experiments = client.get(
+        "/api/research/experiments",
+        params={
+            "project_id": project["id"],
+            "workflow_id": workflow_b["id"],
+            "status": "completed",
+            "query": "primary",
+            "limit": 10,
+        },
+    ).json()
+    assert {item["id"] for item in reviewed_experiments} >= {
+        experiment_a["id"],
+        experiment_b["id"],
+    }
+    assert all(item["comparison_group"] == "primary" for item in reviewed_experiments)
+    assert all(item["metadata"]["reviewed"] is True for item in reviewed_experiments)
+
+
+def test_research_router_closure_action_filters_and_batch_apply(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Closure Router Batch Project"},
+    ).json()
+    workflow = client.post(
+        "/api/research/workflows",
+        json={"project_id": project["id"], "title": "Closure Workflow"},
+    ).json()
+    claim = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "text": "The approach improves benchmark accuracy.",
+            "status": "supported",
+        },
+    ).json()
+
+    writing_actions = client.get(
+        f"/api/research/projects/{project['id']}/closure/actions",
+        params={
+            "kind": "claim_writing_gap",
+            "workflow_id": workflow["id"],
+            "auto_executable": True,
+            "limit": 10,
+        },
+    ).json()
+    assert [item["target_id"] for item in writing_actions] == [claim["id"]]
+
+    evidence_actions = client.get(
+        f"/api/research/projects/{project['id']}/closure/actions",
+        params={
+            "kind": "claim_evidence_gap",
+            "severity": "high",
+            "query": "evidence",
+            "limit": 10,
+        },
+    ).json()
+    assert [item["target_id"] for item in evidence_actions] == [claim["id"]]
+
+    batch_result = client.post(
+        f"/api/research/projects/{project['id']}/closure/actions/apply",
+        json={
+            "closure_keys": [
+                writing_actions[0]["closure_key"],
+                evidence_actions[0]["closure_key"],
+            ],
+            "mode": "execute",
+        },
+    ).json()
+    assert batch_result["executed_count"] == 1
+    assert batch_result["materialized_count"] == 1
+    assert batch_result["skipped_count"] == 0
+
+    refreshed_actions = client.get(
+        f"/api/research/projects/{project['id']}/closure/actions",
+        params={
+            "kind": "claim_writing_gap",
+            "limit": 10,
+        },
+    ).json()
+    assert refreshed_actions == []
+
+
+def test_research_router_project_closure_report(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={
+            "name": "Closure Router Project",
+            "result_bundle_schemas": [
+                {
+                    "name": "paper_bundle.v1",
+                    "required_metrics": ["accuracy"],
+                    "required_artifact_types": ["analysis"],
+                },
+            ],
+        },
+    ).json()
+    workflow = client.post(
+        "/api/research/workflows",
+        json={
+            "project_id": project["id"],
+            "title": "Closure Router Workflow",
+        },
+    ).json()
+    claim = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "text": "The approach improves accuracy.",
+            "status": "supported",
+        },
+    ).json()
+    experiment = client.post(
+        "/api/research/experiments",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "name": "router-closure-run",
+            "status": "completed",
+            "metrics": {"accuracy": 0.93},
+            "claim_ids": [claim["id"]],
+        },
+    ).json()
+    configured = client.patch(
+        f"/api/research/experiments/{experiment['id']}/execution",
+        json={
+            "mode": "command",
+            "result_bundle_schema": "paper_bundle.v1",
+        },
+    ).json()
+    assert configured["experiment"]["execution"]["result_bundle_schema"] == "paper_bundle.v1"
+
+    closure = client.get(
+        f"/api/research/projects/{project['id']}/closure",
+    ).json()
+
+    assert closure["project"]["id"] == project["id"]
+    assert closure["readiness"]["overall_status"] == "blocked"
+    assert closure["summary"]["claims"] == 1
+    assert closure["summary"]["experiments"] == 1
+    assert closure["claim_matrix"][0]["claim_id"] == claim["id"]
+    assert closure["experiment_matrix"][0]["experiment_id"] == experiment["id"]
+    assert any(
+        item["kind"] == "claim_writing_gap" for item in closure["action_items"]
+    )
+
+
+def test_research_router_executes_closure_action_and_builds_package(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research" / "state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={
+            "name": "Closure Execute Router Project",
+            "result_bundle_schemas": [
+                {
+                    "name": "paper_bundle.v1",
+                    "required_metrics": ["accuracy"],
+                    "required_artifact_types": ["analysis"],
+                },
+            ],
+        },
+    ).json()
+    workflow = client.post(
+        "/api/research/workflows",
+        json={
+            "project_id": project["id"],
+            "title": "Closure Execute Workflow",
+        },
+    ).json()
+    claim = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "text": "The method improves accuracy.",
+            "status": "supported",
+        },
+    ).json()
+    experiment = client.post(
+        "/api/research/experiments",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "name": "closure-exec-run",
+            "status": "completed",
+            "metrics": {"accuracy": 0.97},
+            "claim_ids": [claim["id"]],
+        },
+    ).json()
+    client.patch(
+        f"/api/research/experiments/{experiment['id']}/execution",
+        json={
+            "mode": "command",
+            "result_bundle_schema": "paper_bundle.v1",
+        },
+    )
+
+    executed = client.post(
+        f"/api/research/projects/{project['id']}/closure/execute",
+        json={
+            "action_kind": "claim_writing_gap",
+            "target_id": claim["id"],
+        },
+    ).json()
+    materialized = client.post(
+        f"/api/research/projects/{project['id']}/closure/materialize",
+        json={
+            "limit": 5,
+        },
+    ).json()
+    packaged = client.post(
+        f"/api/research/projects/{project['id']}/package",
+    ).json()
+
+    assert executed["executed"] is True
+    assert Path(executed["written_path"]).exists()
+    assert materialized["created_count"] >= 1
+    assert Path(packaged["archive_path"]).exists()
+    assert Path(packaged["manifest_path"]).exists()
+    assert packaged["included_file_count"] >= 1
+
+
 def test_research_runtime_auto_executes_due_workflows(tmp_path, monkeypatch) -> None:
     service = ResearchService(
         store=JsonResearchStore(tmp_path / "research-state.json"),
@@ -271,6 +1265,35 @@ def test_research_runtime_auto_executes_due_workflows(tmp_path, monkeypatch) -> 
                 "channel": "console",
                 "user_id": "owner",
                 "session_id": "research:auto",
+            },
+            execution_catalog=[
+                {
+                    "name": "auto-benchmark",
+                    "template": {
+                        "mode": "command",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            (
+                                "import json, pathlib; "
+                                "pathlib.Path('metrics.json').write_text("
+                                "json.dumps({'accuracy': 0.91, 'robust_accuracy': 0.86}), "
+                                "encoding='utf-8')"
+                            ),
+                        ],
+                        "working_dir": "{output_dir}",
+                        "metadata": {
+                            "metrics_file": "metrics.json",
+                            "output_files": ["metrics.json"],
+                        },
+                    },
+                },
+            ],
+            default_experiment_runner={
+                "enabled": True,
+                "default": {
+                    "catalog_entry": "auto-benchmark",
+                },
             },
         )
         workflow = await service.create_workflow(
@@ -367,6 +1390,22 @@ def test_research_runtime_auto_executes_due_workflows(tmp_path, monkeypatch) -> 
         assert len(claims) >= 3
         assert graph["evidences"]
         assert graph["notes"]
+
+        dataset_version = await service.create_dataset_version(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            name="robustness-benchmark",
+            version_label="v1",
+            split_spec={
+                "train": "train.jsonl",
+                "validation": "dev.jsonl",
+                "test": "test.jsonl",
+            },
+            metadata={
+                "primary_metric": "accuracy",
+            },
+        )
+        assert dataset_version.artifact_id
 
         await _force_stale()
         fifth = await runtime.run_proactive_cycle(
@@ -1256,6 +2295,174 @@ def test_research_router_resumes_ready_project_blockers(tmp_path) -> None:
 
     assert resumed["resumed_count"] == 1
     assert resumed["workflow_results"][0]["workflow"]["id"] == workflow["id"]
+    assert refreshed.current_stage == "result_analysis"
+    assert refreshed.status == "running"
+
+
+def test_research_router_lists_and_applies_selected_project_blockers(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    channels = _FakeChannelManager()
+    runtime = ResearchWorkflowRuntime(service=service, channel_manager=channels)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/research/projects",
+        json={
+            "name": "Project Blocker Apply",
+            "default_binding": {
+                "channel": "console",
+                "user_id": "owner",
+                "session_id": "project:blocker-apply",
+            },
+        },
+    ).json()
+    dispatch_workflow = client.post(
+        "/api/research/workflows",
+        json={
+            "project_id": project["id"],
+            "title": "Dispatch blocker workflow",
+        },
+    ).json()
+    ready_workflow = client.post(
+        "/api/research/workflows",
+        json={
+            "project_id": project["id"],
+            "title": "Ready blocker workflow",
+        },
+    ).json()
+
+    dispatch_run = asyncio.run(
+        service.log_experiment(
+            project_id=project["id"],
+            workflow_id=dispatch_workflow["id"],
+            name="dispatch-gap-run",
+            status="completed",
+            metadata={"experiment_kind": "baseline"},
+        ),
+    )
+    asyncio.run(
+        service.configure_experiment_execution(
+            experiment_id=dispatch_run.id,
+            patch={
+                "mode": "external",
+                "metadata": {
+                    "artifact_contract": {
+                        "required_artifact_types": ["analysis"],
+                    },
+                },
+            },
+        ),
+    )
+
+    ready_run = asyncio.run(
+        service.log_experiment(
+            project_id=project["id"],
+            workflow_id=ready_workflow["id"],
+            name="ready-to-resume-run",
+            status="completed",
+            metrics={"accuracy": 0.91},
+            output_files=["outputs/ready-to-resume.json"],
+            metadata={"experiment_kind": "baseline"},
+        ),
+    )
+    ready_task_workflow = client.post(
+        f"/api/research/workflows/{ready_workflow['id']}/tasks",
+        json={
+            "title": "Completed remediation task",
+            "description": "This remediation task has already been resolved.",
+            "stage": "experiment_run",
+            "assignee": "agent",
+            "metadata": {
+                "task_kind": "experiment_contract_remediation",
+                "experiment_id": ready_run.id,
+                "action_type": "record_metric",
+                "target": "accuracy",
+            },
+        },
+    ).json()
+    ready_task = ready_task_workflow["tasks"][-1]
+    client.patch(
+        f"/api/research/workflows/{ready_workflow['id']}/tasks/{ready_task['id']}",
+        json={
+            "status": "completed",
+            "summary": "Already resolved.",
+        },
+    )
+
+    state = asyncio.run(service.load_state())
+    dispatch_workflow_state = next(
+        item for item in state.workflows if item.id == dispatch_workflow["id"]
+    )
+    dispatch_workflow_state.current_stage = "experiment_run"
+    dispatch_workflow_state.status = "blocked"
+    dispatch_workflow_state.error = "Waiting for selected blocker dispatch."
+    ready_workflow_state = next(
+        item for item in state.workflows if item.id == ready_workflow["id"]
+    )
+    ready_workflow_state.current_stage = "experiment_run"
+    ready_workflow_state.status = "blocked"
+    ready_workflow_state.error = "Ready for selected blocker resume."
+    asyncio.run(service.save_state(state))
+
+    client.post(
+        f"/api/research/workflows/{dispatch_workflow['id']}/tasks",
+        json={
+            "title": "Publish missing analysis artifact",
+            "description": "Attach the analysis artifact back to the experiment.",
+            "stage": "experiment_run",
+            "assignee": "agent",
+            "metadata": {
+                "task_kind": "experiment_contract_remediation",
+                "remediation_key": f"{dispatch_run.id}:artifact:analysis",
+                "experiment_id": dispatch_run.id,
+                "action_type": "publish_artifact",
+                "target": "analysis",
+                "suggested_tool": "research_artifact_upsert",
+            },
+        },
+    )
+
+    ready_rows = client.get(
+        f"/api/research/projects/{project['id']}/blockers",
+        params={"ready_for_retry": True, "limit": 10},
+    ).json()
+    assert [item["workflow_id"] for item in ready_rows] == [ready_workflow["id"]]
+
+    dispatched = client.post(
+        f"/api/research/projects/{project['id']}/blockers/apply",
+        json={
+            "workflow_ids": [dispatch_workflow["id"]],
+            "mode": "dispatch",
+            "task_limit": 2,
+        },
+    ).json()
+    assert dispatched["mode"] == "dispatch"
+    assert dispatched["requested_count"] == 1
+    assert dispatched["matched_count"] == 1
+    assert dispatched["applied_count"] == 1
+    assert dispatched["dispatched_count"] == 1
+    assert channels.messages
+
+    resumed = client.post(
+        f"/api/research/projects/{project['id']}/blockers/apply",
+        json={
+            "workflow_ids": [ready_workflow["id"]],
+            "mode": "resume",
+        },
+    ).json()
+    refreshed = asyncio.run(service.get_workflow(ready_workflow["id"]))
+
+    assert resumed["mode"] == "resume"
+    assert resumed["requested_count"] == 1
+    assert resumed["matched_count"] == 1
+    assert resumed["resumed_count"] == 1
     assert refreshed.current_stage == "result_analysis"
     assert refreshed.status == "running"
 
@@ -2185,17 +3392,20 @@ def test_research_router_runner_profiles_attach_execution_bindings(tmp_path) -> 
         f"/api/research/workflows/{workflow['id']}/experiment-runner",
         json={
             "kind_overrides": {
-                "baseline": {
+                "claim_probe": {
                     "metadata": {
                         "profile_name": "baseline-auto",
                     },
+                },
+                "failure_mode_probe": {
+                    "catalog_entry": "remote-stress",
                 },
             },
             "rules": [
                 {
                     "name": "assumption-ablation-rule",
                     "stages": ["experiment_plan"],
-                    "experiment_kinds": ["ablation"],
+                    "experiment_kinds": ["assumption_ablation"],
                     "hypothesis_kinds": ["assumption_ablation"],
                     "template": {
                         "catalog_entry": "ablation-lab",
@@ -2245,6 +3455,24 @@ def test_research_router_runner_profiles_attach_execution_bindings(tmp_path) -> 
             },
         },
     ).json()
+    dataset_version = client.post(
+        "/api/research/dataset-versions",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "name": "runner-benchmark",
+            "version_label": "v1",
+            "split_spec": {
+                "train": "train.jsonl",
+                "validation": "dev.jsonl",
+                "test": "test.jsonl",
+            },
+            "metadata": {
+                "primary_metric": "accuracy",
+            },
+        },
+    ).json()
+    assert dataset_version["artifact_id"]
 
     async def _run() -> None:
         state = await service.load_state()
@@ -2282,28 +3510,28 @@ def test_research_router_runner_profiles_attach_execution_bindings(tmp_path) -> 
         }
 
         assert first["auto_execution_count"] == 1
-        assert updated_workflow["experiment_runner"]["kind_overrides"]["baseline"]["metadata"]["profile_name"] == "baseline-auto"
+        assert updated_workflow["experiment_runner"]["kind_overrides"]["claim_probe"]["metadata"]["profile_name"] == "baseline-auto"
         assert updated_workflow["experiment_runner"]["rules"][0]["name"] == "assumption-ablation-rule"
         assert project["execution_catalog"][0]["name"] == "local-benchmark"
-        assert by_kind["baseline"].execution.mode == "command"
-        assert by_kind["baseline"].execution.metadata["catalog_entry"] == "local-benchmark"
-        assert by_kind["baseline"].execution.metadata["artifact_contract"]["required_metrics"] == [
+        assert by_kind["claim_probe"].execution.mode == "command"
+        assert by_kind["claim_probe"].execution.metadata["catalog_entry"] == "local-benchmark"
+        assert by_kind["claim_probe"].execution.metadata["artifact_contract"]["required_metrics"] == [
             "accuracy",
             "robust_accuracy",
         ]
-        assert by_kind["baseline"].execution.metadata["profile_name"] == "baseline-auto"
-        assert by_kind["baseline"].execution.result_bundle_file == "analysis-summary.json"
-        assert by_kind["baseline"].execution.result_bundle_schema == "analysis_summary.v1"
-        assert by_kind["baseline"].execution.environment["RC_DATASET"] == "baseline"
-        assert by_kind["baseline"].parameters["dataset"] == "baseline_suite"
-        assert by_kind["baseline"].input_data["planner_stage"] == "experiment_plan"
-        assert by_kind["ablation"].execution.mode == "command"
-        assert by_kind["ablation"].execution.metadata["catalog_entry"] == "ablation-lab"
-        assert by_kind["ablation"].execution.environment["RC_HYPOTHESIS_KIND"] == "assumption_ablation"
-        assert by_kind["ablation"].parameters["ablation_target"] == "core_assumption"
-        assert by_kind["stress_test"].execution.mode == "external"
-        assert by_kind["stress_test"].execution.metadata["catalog_entry"] == "remote-stress"
-        assert by_kind["stress_test"].execution.environment["RC_QUEUE"] == "remote-shift"
+        assert by_kind["claim_probe"].execution.metadata["profile_name"] == "baseline-auto"
+        assert by_kind["claim_probe"].execution.result_bundle_file == "analysis-summary.json"
+        assert by_kind["claim_probe"].execution.result_bundle_schema == "analysis_summary.v1"
+        assert by_kind["claim_probe"].execution.environment["RC_DATASET"] == "claim_probe"
+        assert by_kind["claim_probe"].parameters["dataset"] == "claim_probe_suite"
+        assert by_kind["claim_probe"].input_data["planner_stage"] == "experiment_plan"
+        assert by_kind["assumption_ablation"].execution.mode == "command"
+        assert by_kind["assumption_ablation"].execution.metadata["catalog_entry"] == "ablation-lab"
+        assert by_kind["assumption_ablation"].execution.environment["RC_HYPOTHESIS_KIND"] == "assumption_ablation"
+        assert by_kind["assumption_ablation"].parameters["ablation_target"] == "core_assumption"
+        assert by_kind["failure_mode_probe"].execution.mode == "external"
+        assert by_kind["failure_mode_probe"].execution.metadata["catalog_entry"] == "remote-stress"
+        assert by_kind["failure_mode_probe"].execution.environment["RC_QUEUE"] == "remote-shift"
 
         state = await service.load_state()
         state.workflows[0].last_run_at = "2000-01-01T00:00:00+00:00"
@@ -2327,11 +3555,12 @@ def test_research_router_runner_profiles_attach_execution_bindings(tmp_path) -> 
 
         assert second["auto_execution_count"] == 1
         assert updated.current_stage == "experiment_run"
-        assert by_kind["baseline"].status == "completed"
-        assert by_kind["ablation"].status == "completed"
-        assert by_kind["baseline"].metrics["dataset"] == "baseline"
-        assert by_kind["baseline"].metrics["stage"] == "experiment_plan"
-        assert by_kind["stress_test"].status == "running"
+        assert by_kind["claim_probe"].status == "completed"
+        assert by_kind["assumption_ablation"].status == "completed"
+        assert by_kind["baseline_risk"].status == "completed"
+        assert by_kind["claim_probe"].metrics["dataset"] == "claim_probe"
+        assert by_kind["claim_probe"].metrics["stage"] == "experiment_plan"
+        assert by_kind["failure_mode_probe"].status == "running"
 
     asyncio.run(_run())
 
@@ -3313,3 +4542,204 @@ def test_research_runtime_auto_executes_metric_remediation_from_notebook_artifac
         assert updated_workflow.current_stage == "result_analysis"
 
     asyncio.run(_run())
+
+
+def test_research_router_p0_endpoints(tmp_path) -> None:
+    service = ResearchService(
+        store=JsonResearchStore(tmp_path / "research-state.json"),
+    )
+    runtime = ResearchWorkflowRuntime(service=service)
+
+    app = FastAPI()
+    app.state.research_service = service
+    app.state.research_runtime = runtime
+    app.include_router(research_router.router, prefix="/api/research")
+    client = TestClient(app)
+
+    data_dir = tmp_path / "router-p0"
+    data_dir.mkdir()
+    dataset_file = data_dir / "train.jsonl"
+    dataset_file.write_text('{"text":"sample"}\n', encoding="utf-8")
+
+    project = client.post(
+        "/api/research/projects",
+        json={"name": "Router P0 Project"},
+    ).json()
+    workflow = client.post(
+        "/api/research/workflows",
+        json={
+            "project_id": project["id"],
+            "title": "Router P0 Workflow",
+        },
+    ).json()
+
+    memory_entry = client.post(
+        f"/api/research/projects/{project['id']}/memory",
+        json={
+            "title": "Project fact",
+            "content": "We will use dataset benchmark v1.",
+            "entry_kind": "fact",
+            "workflow_id": workflow["id"],
+            "stage": "experiment_plan",
+            "tags": ["p0"],
+        },
+    ).json()
+    memory_rows = client.get(
+        f"/api/research/projects/{project['id']}/memory",
+    ).json()
+    assert memory_rows[0]["id"] == memory_entry["id"]
+
+    dataset_version = client.post(
+        "/api/research/dataset-versions",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "name": "benchmark",
+            "version_label": "v1",
+            "source_paths": [str(dataset_file)],
+            "split_spec": {"train": "train.jsonl"},
+            "metadata": {"primary_metric": "accuracy"},
+        },
+    ).json()
+    dataset_rows = client.get(
+        "/api/research/dataset-versions",
+        params={"project_id": project["id"]},
+    ).json()
+    assert dataset_rows[0]["id"] == dataset_version["id"]
+
+    source_artifact = client.post(
+        "/api/research/artifacts",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "title": "Seed paper",
+            "artifact_type": "paper",
+            "source_type": "semantic_scholar",
+            "source_id": "paper-1",
+        },
+    ).json()
+    derived_artifact = client.post(
+        "/api/research/artifacts",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "title": "Structured synthesis",
+            "artifact_type": "analysis",
+            "source_type": "workflow_stage",
+            "source_id": f"{workflow['id']}:note_synthesis",
+        },
+    ).json()
+    relation = client.post(
+        "/api/research/artifact-relations",
+        json={
+            "project_id": project["id"],
+            "source_artifact_id": derived_artifact["id"],
+            "target_artifact_id": source_artifact["id"],
+            "relation_type": "derived_from",
+            "workflow_id": workflow["id"],
+        },
+    ).json()
+    relation_rows = client.get(
+        "/api/research/artifact-relations",
+        params={"project_id": project["id"], "artifact_id": derived_artifact["id"]},
+    ).json()
+    lineage = client.get(
+        f"/api/research/artifacts/{derived_artifact['id']}/lineage",
+    ).json()
+    assert relation_rows[0]["id"] == relation["id"]
+    assert lineage["relations"][0]["id"] == relation["id"]
+
+    claim = client.post(
+        "/api/research/claims",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "text": "The seed paper supports the baseline claim.",
+            "artifact_ids": [source_artifact["id"]],
+        },
+    ).json()
+    client.post(
+        "/api/research/evidences",
+        json={
+            "project_id": project["id"],
+            "claim_ids": [claim["id"]],
+            "evidence_type": "paper",
+            "summary": "The paper reports the baseline result explicitly.",
+            "source_type": "paper",
+            "source_id": source_artifact["id"],
+            "title": source_artifact["title"],
+            "locator": "p.1",
+            "artifact_id": source_artifact["id"],
+            "workflow_id": workflow["id"],
+        },
+    )
+    validation = client.post(
+        f"/api/research/claims/{claim['id']}/validate",
+        json={"apply_status": True},
+    ).json()
+    assert validation["status"] == "supported"
+
+    experiment = client.post(
+        "/api/research/experiments",
+        json={
+            "project_id": project["id"],
+            "workflow_id": workflow["id"],
+            "name": "Router provenance run",
+            "status": "completed",
+            "dataset_version_ids": [dataset_version["id"]],
+            "claim_ids": [claim["id"]],
+            "metrics": {"accuracy": 0.93},
+            "output_files": [str(dataset_file)],
+            "metadata": {"stage": "experiment_plan"},
+        },
+    ).json()
+    client.patch(
+        f"/api/research/experiments/{experiment['id']}/execution",
+        json={
+            "mode": "command",
+            "command": [sys.executable, "-V"],
+            "working_dir": str(data_dir),
+            "environment": {"RC_FLAG": "1"},
+        },
+    )
+    captured = client.post(
+        f"/api/research/experiments/{experiment['id']}/provenance/capture",
+        json={
+            "command": [sys.executable, "-V"],
+            "working_dir": str(data_dir),
+            "environment_keys": ["RC_FLAG"],
+        },
+    ).json()
+    replay_plan = client.get(
+        f"/api/research/experiments/{experiment['id']}/replay-plan",
+    ).json()
+    assert captured["provenance"]["replayable"] is True
+    assert replay_plan["command"] == [sys.executable, "-V"]
+
+    checkpoints = client.get(
+        f"/api/research/workflows/{workflow['id']}/checkpoints",
+    ).json()
+    assert checkpoints
+    initial_checkpoint_id = checkpoints[-1]["id"]
+
+    advanced = asyncio.run(
+        service.update_workflow_task(
+            workflow_id=workflow["id"],
+            task_id=workflow["tasks"][0]["id"],
+            status="completed",
+            summary="Advance once for restore coverage.",
+        ),
+    )
+    assert advanced.current_stage == "paper_reading"
+
+    restored = client.post(
+        f"/api/research/workflows/{workflow['id']}/restore",
+        json={"checkpoint_id": initial_checkpoint_id},
+    ).json()
+    audit_rows = client.get(
+        f"/api/research/projects/{project['id']}/audit",
+    ).json()
+
+    assert restored["current_stage"] == "literature_search"
+    assert any(item["entity_type"] == "dataset_version" for item in audit_rows)
+    assert any(item["entity_type"] == "workflow" and item["action"] == "restore_checkpoint" for item in audit_rows)

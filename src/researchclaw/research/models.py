@@ -86,6 +86,9 @@ EvidenceType = Literal[
     "generated_table",
     "generated_figure",
     "artifact",
+    "dataset",
+    "code_snapshot",
+    "config_snapshot",
 ]
 ArtifactType = Literal[
     "paper",
@@ -98,6 +101,9 @@ ArtifactType = Literal[
     "draft",
     "summary",
     "analysis",
+    "dataset",
+    "code_snapshot",
+    "config_snapshot",
 ]
 ExperimentStatus = Literal[
     "planned",
@@ -130,6 +136,23 @@ ReminderType = Literal[
     "writing_todo",
     "stage_stuck_followup",
     "remediation_task_followup",
+]
+ProjectMemoryKind = Literal[
+    "fact",
+    "decision",
+    "open_question",
+    "failure",
+    "term_definition",
+    "preference",
+]
+ProjectMemoryStatus = Literal["active", "resolved", "archived"]
+ArtifactRelationType = Literal[
+    "derived_from",
+    "uses",
+    "produces",
+    "summarizes",
+    "cites",
+    "supports",
 ]
 
 
@@ -417,6 +440,115 @@ class ResearchEvidence(BaseModel):
     updated_at: str = Field(default_factory=utc_now)
 
 
+class ProjectMemoryEntry(BaseModel):
+    """Reusable project knowledge that supports long-running research progress."""
+
+    id: str = Field(default_factory=lambda: new_id("memory"))
+    project_id: str
+    title: str
+    content: str
+    entry_kind: ProjectMemoryKind = "fact"
+    status: ProjectMemoryStatus = "active"
+    workflow_id: str = ""
+    stage: str = ""
+    note_ids: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+    artifact_ids: list[str] = Field(default_factory=list)
+    experiment_ids: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+
+
+class ArtifactRelation(BaseModel):
+    """Typed lineage edge between two research artifacts."""
+
+    id: str = Field(default_factory=lambda: new_id("relation"))
+    project_id: str
+    relation_type: ArtifactRelationType
+    source_artifact_id: str
+    target_artifact_id: str
+    workflow_id: str = ""
+    experiment_id: str = ""
+    summary: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now)
+
+
+class WorkflowCheckpoint(BaseModel):
+    """Snapshot of workflow progress used for recovery and audit."""
+
+    id: str = Field(default_factory=lambda: new_id("checkpoint"))
+    project_id: str
+    workflow_id: str
+    stage: WorkflowStageName
+    workflow_status: WorkflowStatus
+    reason: str = ""
+    task_statuses: dict[str, str] = Field(default_factory=dict)
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now)
+
+
+class AuditEvent(BaseModel):
+    """Append-only audit event for state-changing research operations."""
+
+    id: str = Field(default_factory=lambda: new_id("audit"))
+    project_id: str = ""
+    workflow_id: str = ""
+    entity_type: str
+    entity_id: str = ""
+    action: str
+    actor: str = "system"
+    summary: str = ""
+    before: dict[str, Any] = Field(default_factory=dict)
+    after: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now)
+
+
+class ResearchDatasetVersion(BaseModel):
+    """Versioned dataset asset used by research workflows and experiments."""
+
+    id: str = Field(default_factory=lambda: new_id("dataset"))
+    project_id: str
+    name: str
+    version_label: str = "v1"
+    description: str = ""
+    workflow_id: str = ""
+    path: str = ""
+    manifest_path: str = ""
+    source_paths: list[str] = Field(default_factory=list)
+    artifact_id: str = ""
+    parent_version_id: str = ""
+    split_spec: dict[str, Any] = Field(default_factory=dict)
+    transform_steps: list[dict[str, Any]] = Field(default_factory=list)
+    file_hashes: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+
+
+class ExperimentProvenance(BaseModel):
+    """Captured provenance needed to replay or audit an experiment run."""
+
+    captured_at: str | None = None
+    git_commit: str = ""
+    git_branch: str = ""
+    git_dirty: bool = False
+    git_diff_summary: str = ""
+    cwd: str = ""
+    command: list[str] = Field(default_factory=list)
+    environment_keys: list[str] = Field(default_factory=list)
+    dependency_fingerprint: dict[str, Any] = Field(default_factory=dict)
+    dataset_version_ids: list[str] = Field(default_factory=list)
+    input_hashes: dict[str, str] = Field(default_factory=dict)
+    output_hashes: dict[str, str] = Field(default_factory=dict)
+    replayable: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ExperimentExecutionBinding(BaseModel):
     """Execution metadata for external or delegated experiment runs."""
 
@@ -446,6 +578,7 @@ class ExperimentRun(BaseModel):
     status: ExperimentStatus = "planned"
     parameters: dict[str, Any] = Field(default_factory=dict)
     input_data: dict[str, Any] = Field(default_factory=dict)
+    dataset_version_ids: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
     output_files: list[str] = Field(default_factory=list)
@@ -460,6 +593,7 @@ class ExperimentRun(BaseModel):
     execution: ExperimentExecutionBinding = Field(
         default_factory=ExperimentExecutionBinding,
     )
+    provenance: ExperimentProvenance = Field(default_factory=ExperimentProvenance)
     created_at: str = Field(default_factory=utc_now)
     started_at: str | None = None
     finished_at: str | None = None
@@ -535,12 +669,17 @@ class ProactiveReminder(BaseModel):
 class ResearchState(BaseModel):
     """Persistent state for research projects, workflows, and linked data."""
 
-    version: int = 1
+    version: int = 2
     projects: list[ResearchProject] = Field(default_factory=list)
     workflows: list[ResearchWorkflow] = Field(default_factory=list)
     notes: list[ResearchNote] = Field(default_factory=list)
     claims: list[ResearchClaim] = Field(default_factory=list)
     evidences: list[ResearchEvidence] = Field(default_factory=list)
+    project_memory: list[ProjectMemoryEntry] = Field(default_factory=list)
+    artifact_relations: list[ArtifactRelation] = Field(default_factory=list)
+    dataset_versions: list[ResearchDatasetVersion] = Field(default_factory=list)
+    checkpoints: list[WorkflowCheckpoint] = Field(default_factory=list)
+    audit_events: list[AuditEvent] = Field(default_factory=list)
     experiments: list[ExperimentRun] = Field(default_factory=list)
     experiment_events: list[ExperimentEvent] = Field(default_factory=list)
     artifacts: list[ResearchArtifact] = Field(default_factory=list)

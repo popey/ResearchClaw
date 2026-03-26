@@ -146,9 +146,9 @@ async def bootstrap_gateway_runtime(app: FastAPI) -> GatewayRuntime:
         logger.debug("Automation run store not initialized", exc_info=True)
 
     try:
-        from ...research import JsonResearchStore, ResearchService
+        from ...research import ResearchService, build_default_research_store
 
-        research_service = ResearchService(store=JsonResearchStore())
+        research_service = ResearchService(store=build_default_research_store())
         os.environ["RESEARCHCLAW_RESEARCH_STATE_PATH"] = str(research_service.path)
         runtime.bind("research_service", research_service)
         logger.info("Research service initialized")

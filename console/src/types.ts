@@ -236,6 +236,18 @@ export type ResearchWorkflowTask = {
   due_at?: string | null;
 };
 
+export type ResearchWorkflowCheckpoint = {
+  id: string;
+  workflow_id: string;
+  project_id: string;
+  stage: string;
+  workflow_status: string;
+  reason?: string;
+  task_statuses?: Record<string, string>;
+  snapshot?: Record<string, unknown>;
+  created_at?: string;
+};
+
 export type ResearchWorkflowItem = {
   id: string;
   project_id: string;
@@ -251,6 +263,28 @@ export type ResearchWorkflowItem = {
   updated_at?: string;
 };
 
+export type ResearchNoteItem = {
+  id: string;
+  project_id: string;
+  workflow_id?: string;
+  title: string;
+  content: string;
+  note_type: string;
+  experiment_ids?: string[];
+  claim_ids?: string[];
+  artifact_ids?: string[];
+  evidence_ids?: string[];
+  paper_refs?: string[];
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+};
+
+export type ResearchNoteBulkUpdateResult = {
+  updated_count: number;
+  notes: ResearchNoteItem[];
+};
+
 export type ResearchClaimItem = {
   id: string;
   project_id: string;
@@ -261,13 +295,43 @@ export type ResearchClaimItem = {
   note_ids?: string[];
   evidence_ids?: string[];
   artifact_ids?: string[];
+  metadata?: Record<string, unknown>;
   updated_at?: string;
+};
+
+export type ResearchClaimBulkUpdateResult = {
+  updated_count: number;
+  claims: ResearchClaimItem[];
+};
+
+export type ResearchProjectMemoryEntry = {
+  id: string;
+  project_id: string;
+  workflow_id?: string;
+  title: string;
+  content: string;
+  entry_kind: string;
+  stage?: string;
+  status?: string;
+  note_ids?: string[];
+  claim_ids?: string[];
+  artifact_ids?: string[];
+  experiment_ids?: string[];
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+};
+
+export type ResearchProjectMemoryBulkUpdateResult = {
+  updated_count: number;
+  entries: ResearchProjectMemoryEntry[];
 };
 
 export type ResearchEvidenceItem = {
   id: string;
   project_id: string;
   workflow_id?: string;
+  claim_ids?: string[];
   experiment_id?: string;
   note_id?: string;
   artifact_id?: string;
@@ -281,6 +345,13 @@ export type ResearchEvidenceItem = {
     quote?: string;
     url?: string;
   };
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+};
+
+export type ResearchEvidenceBulkUpdateResult = {
+  updated_count: number;
+  evidences: ResearchEvidenceItem[];
 };
 
 export type ResearchReminderItem = {
@@ -292,6 +363,161 @@ export type ResearchReminderItem = {
   title: string;
   summary: string;
   stage?: string;
+};
+
+export type ResearchAuditEvent = {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  project_id?: string;
+  workflow_id?: string;
+  summary: string;
+  created_at?: string;
+  actor?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ResearchDatasetVersion = {
+  id: string;
+  project_id: string;
+  workflow_id?: string;
+  name: string;
+  version_label: string;
+  description?: string;
+  path?: string;
+  manifest_path?: string;
+  source_paths?: string[];
+  artifact_id?: string;
+  parent_version_id?: string;
+  split_spec?: Record<string, unknown>;
+  transform_steps?: Array<Record<string, unknown>>;
+  file_hashes?: Record<string, string>;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+};
+
+export type ResearchDatasetVersionBulkUpdateResult = {
+  updated_count: number;
+  dataset_versions: ResearchDatasetVersion[];
+};
+
+export type ResearchArtifactItem = {
+  id: string;
+  project_id: string;
+  workflow_id?: string;
+  experiment_id?: string;
+  title: string;
+  artifact_type: string;
+  description?: string;
+  path?: string;
+  uri?: string;
+  source_type?: string;
+  source_id?: string;
+  note_ids?: string[];
+  claim_ids?: string[];
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+};
+
+export type ResearchArtifactBulkUpdateResult = {
+  updated_count: number;
+  artifacts: ResearchArtifactItem[];
+};
+
+export type ResearchArtifactRelation = {
+  id: string;
+  project_id: string;
+  workflow_id?: string;
+  experiment_id?: string;
+  relation_type: string;
+  source_artifact_id: string;
+  target_artifact_id: string;
+  summary?: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+};
+
+export type ResearchArtifactLineage = {
+  artifact: ResearchArtifactItem;
+  direction: string;
+  relations: ResearchArtifactRelation[];
+  related_artifacts: ResearchArtifactItem[];
+};
+
+export type ResearchExperimentProvenance = {
+  captured_at?: string;
+  git_commit?: string;
+  git_branch?: string;
+  git_dirty?: boolean;
+  git_diff_summary?: string;
+  cwd?: string;
+  command?: string[];
+  environment_keys?: string[];
+  dependency_fingerprint?: Record<string, unknown>;
+  dataset_version_ids?: string[];
+  input_hashes?: Record<string, string>;
+  output_hashes?: Record<string, string>;
+  replayable?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export type ResearchExperimentExecution = {
+  mode?: string;
+  command?: string[];
+  entrypoint?: string;
+  working_dir?: string;
+  notebook_path?: string;
+  result_bundle_file?: string;
+  result_bundle_schema?: string;
+  environment?: Record<string, string>;
+  external_run_id?: string;
+  requested_by?: string;
+  instructions?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ResearchExperimentItem = {
+  id: string;
+  project_id: string;
+  workflow_id?: string;
+  name: string;
+  status: string;
+  parameters?: Record<string, unknown>;
+  input_data?: Record<string, unknown>;
+  dataset_version_ids?: string[];
+  metrics?: Record<string, unknown>;
+  notes?: string;
+  output_files?: string[];
+  related_run_ids?: string[];
+  claim_ids?: string[];
+  note_ids?: string[];
+  artifact_ids?: string[];
+  execution?: ResearchExperimentExecution;
+  provenance?: ResearchExperimentProvenance;
+  comparison_group?: string;
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+};
+
+export type ResearchExperimentBulkUpdateResult = {
+  updated_count: number;
+  experiments: ResearchExperimentItem[];
+};
+
+export type ResearchExperimentReplayPlan = {
+  experiment: ResearchExperimentItem;
+  execution_mode?: string;
+  command?: string[];
+  entrypoint?: string;
+  notebook_path?: string;
+  working_dir?: string;
+  environment_keys?: string[];
+  dataset_versions?: ResearchDatasetVersion[];
+  dependency_fingerprint?: Record<string, unknown>;
+  input_hashes?: Record<string, string>;
+  output_hashes?: Record<string, string>;
 };
 
 export type ResearchOverview = {
@@ -309,6 +535,41 @@ export type ResearchOverview = {
   projects: ResearchProjectItem[];
 };
 
+export type ResearchProjectBlockerTaskItem = {
+  task_id: string;
+  title: string;
+  status: string;
+  assignee?: string;
+  action_type?: string;
+  target?: string;
+  suggested_tool?: string;
+  can_dispatch?: boolean;
+  can_execute?: boolean;
+  dispatch_count?: number;
+  execution_count?: number;
+  last_dispatch_summary?: string;
+  last_execution_summary?: string;
+};
+
+export type ResearchProjectBlockerItem = {
+  kind: string;
+  workflow_id?: string;
+  experiment_id?: string;
+  blocked_task_id?: string;
+  blocked_task_title?: string;
+  title: string;
+  summary: string;
+  status: string;
+  stage?: string;
+  open_remediation_tasks?: number;
+  ready_for_retry?: boolean;
+  contract_failure_count?: number;
+  has_dispatchable_tasks?: boolean;
+  has_executable_tasks?: boolean;
+  updated_at?: string;
+  actionable_tasks?: ResearchProjectBlockerTaskItem[];
+};
+
 export type ResearchDashboard = {
   project: ResearchProjectItem;
   counts: Record<string, number>;
@@ -322,34 +583,176 @@ export type ResearchDashboard = {
   recent_experiments: Array<{ id: string; name: string; status: string }>;
   recent_claims: ResearchClaimItem[];
   recent_drafts: Array<{ id: string; title: string; artifact_type: string }>;
-  recent_blockers: Array<{
-    kind: string;
+  recent_blockers: ResearchProjectBlockerItem[];
+};
+
+export type ResearchClosureReport = {
+  project: ResearchProjectItem;
+  readiness: {
+    overall_status: string;
+    completion_score: number;
+    ready_for_writing: boolean;
+    ready_for_submission: boolean;
+    ready_for_reproducibility: boolean;
+    blocking_issue_count: number;
+    warning_issue_count: number;
+  };
+  summary: Record<string, number>;
+  workflow_status: Record<string, number>;
+  artifact_coverage: {
+    by_type: Record<string, number>;
+    missing_expected_types: string[];
+  };
+  claim_matrix: Array<{
+    claim_id: string;
     workflow_id?: string;
-    experiment_id?: string;
-    blocked_task_id?: string;
-    blocked_task_title?: string;
-    title: string;
-    summary: string;
+    text: string;
     status: string;
-    stage?: string;
-    open_remediation_tasks?: number;
-    ready_for_retry?: boolean;
-    actionable_tasks?: Array<{
-      task_id: string;
-      title: string;
-      status: string;
-      assignee?: string;
-      action_type?: string;
-      target?: string;
-      suggested_tool?: string;
-      can_dispatch?: boolean;
-      can_execute?: boolean;
-      dispatch_count?: number;
-      execution_count?: number;
-      last_dispatch_summary?: string;
-      last_execution_summary?: string;
-    }>;
+    confidence?: number | null;
+    evidence_count: number;
+    evidence_types: string[];
+    experiment_count: number;
+    completed_experiment_count: number;
+    artifact_count: number;
+    artifact_types: string[];
+    ready_for_writing: boolean;
+    ready_for_submission: boolean;
+    gaps: string[];
+    updated_at?: string;
   }>;
+  experiment_matrix: Array<{
+    experiment_id: string;
+    workflow_id?: string;
+    name: string;
+    status: string;
+    claim_count: number;
+    artifact_count: number;
+    contract_enabled: boolean;
+    contract_passed: boolean;
+    bundle_state: string;
+    bundle_schema?: string;
+    reproducibility_ready: boolean;
+    missing_metrics: string[];
+    missing_outputs: string[];
+    missing_artifact_types: string[];
+    bundle_missing_sections: string[];
+    gaps: string[];
+    updated_at?: string;
+  }>;
+  action_items: ResearchClosureActionItem[];
+};
+
+export type ResearchClosureActionItem = {
+  severity: string;
+  kind: string;
+  title: string;
+  summary: string;
+  closure_key?: string;
+  target_type: string;
+  target_id: string;
+  stage?: string;
+  assignee?: string;
+  suggested_tool?: string;
+  auto_executable?: boolean;
+  materializable?: boolean;
+  artifact_type?: string;
+  workflow_id?: string;
+  experiment_id?: string;
+  claim_id?: string;
+};
+
+export type ResearchClosureMaterializeResult = {
+  project?: ResearchProjectItem;
+  created_count: number;
+  skipped_count: number;
+  tasks: ResearchWorkflowTask[];
+  skipped?: Array<{
+    reason?: string;
+    action?: {
+      kind?: string;
+      title?: string;
+      target_id?: string;
+    };
+    task?: ResearchWorkflowTask;
+  }>;
+  closure?: ResearchClosureReport;
+};
+
+export type ResearchClosureActionExecuteResult = {
+  executed: boolean;
+  materialized?: boolean;
+  reason?: string;
+  written_path?: string;
+  closure_action?: {
+    kind?: string;
+    target_id?: string;
+    title?: string;
+    auto_executable?: boolean;
+  };
+  artifact?: {
+    id: string;
+    title: string;
+    artifact_type: string;
+    path?: string;
+  } | null;
+  note?: {
+    id: string;
+    title: string;
+    note_type?: string;
+  } | null;
+  materialize_result?: ResearchClosureMaterializeResult;
+  closure?: ResearchClosureReport;
+};
+
+export type ResearchClosureActionBatchResult = {
+  mode: string;
+  requested_count: number;
+  executed_count: number;
+  materialized_count: number;
+  skipped_count: number;
+  results: Array<{
+    closure_key: string;
+    executed: boolean;
+    materialized: boolean;
+    skipped: boolean;
+    reason?: string;
+    created_count?: number;
+  }>;
+  closure?: ResearchClosureReport;
+};
+
+export type ResearchProjectPackageResult = {
+  project?: ResearchProjectItem;
+  closure?: ResearchClosureReport;
+  package_dir: string;
+  archive_path: string;
+  manifest_path: string;
+  included_file_count: number;
+  missing_file_count: number;
+  included_files?: Array<{
+    kind?: string;
+    id?: string;
+    title?: string;
+    source_path?: string;
+    bundle_path?: string;
+  }>;
+  missing_files?: Array<{
+    kind?: string;
+    id?: string;
+    title?: string;
+    source_path?: string;
+  }>;
+  artifact?: {
+    id: string;
+    title: string;
+    artifact_type: string;
+    path?: string;
+  };
+  note?: {
+    id: string;
+    title: string;
+    note_type?: string;
+  };
 };
 
 export type ResearchWorkflowTaskActionResult = {
@@ -418,6 +821,11 @@ export type ResearchWorkflowRemediationBatchResult = {
 export type ResearchProjectBlockerBatchResult = {
   project?: ResearchProjectItem;
   dashboard?: ResearchDashboard;
+  mode?: string;
+  selected_workflow_ids?: string[];
+  requested_count?: number;
+  matched_count?: number;
+  applied_count?: number;
   workflow_results?: Array<
     | ResearchWorkflowRemediationBatchResult
     | ResearchWorkflowExecutionResult

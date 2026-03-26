@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ....constant import RESEARCH_STATE_FILE
-from ....research import JsonResearchStore, ResearchService
+from ....research import ResearchService, build_default_research_store
 
 
 def _run(coro):
@@ -49,9 +49,10 @@ def _resolve_state_path(agent: object | None) -> Path | None:
 
 
 def _service_for_agent(agent: object | None) -> ResearchService:
-    return ResearchService(
-        store=JsonResearchStore(_resolve_state_path(agent)),
-    )
+    resolved_state_path = _resolve_state_path(agent)
+    if resolved_state_path is not None:
+        os.environ["RESEARCHCLAW_RESEARCH_STATE_PATH"] = str(resolved_state_path)
+    return ResearchService(store=build_default_research_store())
 
 
 def _jsonify(value: Any) -> Any:
@@ -125,6 +126,120 @@ def register(agent: object | None = None):
 
     def research_project_dashboard(project_id: str) -> dict[str, Any]:
         payload = _run(service.get_project_dashboard(project_id))
+        return _jsonify(payload)
+
+    def research_project_memory_list(
+        project_id: str,
+        workflow_id: str = "",
+        entry_kind: str = "",
+        status: str = "",
+        stage: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in _run(
+                service.list_project_memory(
+                    project_id=project_id,
+                    workflow_id=workflow_id,
+                    entry_kind=entry_kind,
+                    status=status,
+                    stage=stage,
+                    limit=limit,
+                ),
+            )
+        ]
+
+    def research_project_memory_create(
+        project_id: str,
+        title: str,
+        content: str,
+        entry_kind: str = "fact",
+        workflow_id: str = "",
+        stage: str = "",
+        status: str = "active",
+        note_ids: list[str] | None = None,
+        claim_ids: list[str] | None = None,
+        artifact_ids: list[str] | None = None,
+        experiment_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        entry = _run(
+            service.create_project_memory(
+                project_id=project_id,
+                title=title,
+                content=content,
+                entry_kind=entry_kind,
+                workflow_id=workflow_id,
+                stage=stage,
+                status=status,
+                note_ids=note_ids,
+                claim_ids=claim_ids,
+                artifact_ids=artifact_ids,
+                experiment_ids=experiment_ids,
+                tags=tags,
+                metadata=metadata,
+            ),
+        )
+        return entry.model_dump(mode="json")
+
+    def research_project_audit(
+        project_id: str,
+        workflow_id: str = "",
+        entity_type: str = "",
+        entity_id: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in _run(
+                service.list_audit_events(
+                    project_id=project_id,
+                    workflow_id=workflow_id,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    limit=limit,
+                ),
+            )
+        ]
+
+    def research_project_closure(project_id: str) -> dict[str, Any]:
+        payload = _run(service.get_project_closure_report(project_id))
+        return _jsonify(payload)
+
+    def research_project_closure_materialize(
+        project_id: str,
+        limit: int = 5,
+        action_kind: str = "",
+        target_id: str = "",
+    ) -> dict[str, Any]:
+        payload = _run(
+            service.materialize_project_closure_actions(
+                project_id,
+                limit=limit,
+                action_kind=action_kind,
+                target_id=target_id,
+            ),
+        )
+        return _jsonify(payload)
+
+    def research_project_closure_execute(
+        project_id: str,
+        action_kind: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        payload = _run(
+            service.execute_project_closure_action(
+                project_id,
+                action_kind=action_kind,
+                target_id=target_id,
+            ),
+        )
+        return _jsonify(payload)
+
+    def research_project_package(project_id: str) -> dict[str, Any]:
+        payload = _run(service.create_project_submission_package(project_id))
         return _jsonify(payload)
 
     def research_project_blockers_dispatch(
@@ -213,6 +328,32 @@ def register(agent: object | None = None):
 
     def research_workflow_get(workflow_id: str) -> dict[str, Any]:
         workflow = _run(service.get_workflow(workflow_id))
+        return workflow.model_dump(mode="json")
+
+    def research_workflow_checkpoints(
+        workflow_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in _run(
+                service.list_workflow_checkpoints(
+                    workflow_id=workflow_id,
+                    limit=limit,
+                ),
+            )
+        ]
+
+    def research_workflow_restore(
+        workflow_id: str,
+        checkpoint_id: str = "",
+    ) -> dict[str, Any]:
+        workflow = _run(
+            service.restore_workflow_checkpoint(
+                workflow_id=workflow_id,
+                checkpoint_id=checkpoint_id,
+            ),
+        )
         return workflow.model_dump(mode="json")
 
     def research_workflow_remediation(workflow_id: str) -> dict[str, Any]:
@@ -460,6 +601,60 @@ def register(agent: object | None = None):
         )
         return artifact.model_dump(mode="json")
 
+    def research_artifact_relations(
+        project_id: str = "",
+        artifact_id: str = "",
+        relation_type: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in _run(
+                service.list_artifact_relations(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    relation_type=relation_type,
+                    limit=limit,
+                ),
+            )
+        ]
+
+    def research_artifact_relation_create(
+        project_id: str,
+        source_artifact_id: str,
+        target_artifact_id: str,
+        relation_type: str,
+        workflow_id: str = "",
+        experiment_id: str = "",
+        summary: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        relation = _run(
+            service.create_artifact_relation(
+                project_id=project_id,
+                source_artifact_id=source_artifact_id,
+                target_artifact_id=target_artifact_id,
+                relation_type=relation_type,
+                workflow_id=workflow_id,
+                experiment_id=experiment_id,
+                summary=summary,
+                metadata=metadata,
+            ),
+        )
+        return relation.model_dump(mode="json")
+
+    def research_artifact_lineage(
+        artifact_id: str,
+        direction: str = "both",
+    ) -> dict[str, Any]:
+        payload = _run(
+            service.get_artifact_lineage(
+                artifact_id,
+                direction=direction,
+            ),
+        )
+        return _jsonify(payload)
+
     def research_claim_create(
         project_id: str,
         text: str,
@@ -560,6 +755,67 @@ def register(agent: object | None = None):
             for key, value in payload.items()
         }
 
+    def research_claim_validate(
+        claim_id: str,
+        apply_status: bool = True,
+    ) -> dict[str, Any]:
+        return _run(
+            service.validate_claim(
+                claim_id,
+                apply_status=apply_status,
+            ),
+        )
+
+    def research_dataset_versions(
+        project_id: str = "",
+        workflow_id: str = "",
+        name: str = "",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in _run(
+                service.list_dataset_versions(
+                    project_id=project_id,
+                    workflow_id=workflow_id,
+                    name=name,
+                    limit=limit,
+                ),
+            )
+        ]
+
+    def research_dataset_version_create(
+        project_id: str,
+        name: str,
+        version_label: str = "v1",
+        description: str = "",
+        workflow_id: str = "",
+        path: str = "",
+        source_paths: list[str] | None = None,
+        parent_version_id: str = "",
+        split_spec: dict[str, Any] | None = None,
+        transform_steps: list[dict[str, Any]] | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        dataset_version = _run(
+            service.create_dataset_version(
+                project_id=project_id,
+                name=name,
+                version_label=version_label,
+                description=description,
+                workflow_id=workflow_id,
+                path=path,
+                source_paths=source_paths,
+                parent_version_id=parent_version_id,
+                split_spec=split_spec,
+                transform_steps=transform_steps,
+                tags=tags,
+                metadata=metadata,
+            ),
+        )
+        return dataset_version.model_dump(mode="json")
+
     def research_experiment_log(
         project_id: str,
         name: str,
@@ -567,6 +823,7 @@ def register(agent: object | None = None):
         status: str = "planned",
         parameters: dict[str, Any] | None = None,
         input_data: dict[str, Any] | None = None,
+        dataset_version_ids: list[str] | None = None,
         metrics: dict[str, Any] | None = None,
         notes: str = "",
         output_files: list[str] | None = None,
@@ -575,6 +832,7 @@ def register(agent: object | None = None):
         comparison_group: str = "",
         related_run_ids: list[str] | None = None,
         claim_ids: list[str] | None = None,
+        provenance: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         run = _run(
@@ -585,6 +843,7 @@ def register(agent: object | None = None):
                 status=status,
                 parameters=parameters,
                 input_data=input_data,
+                dataset_version_ids=dataset_version_ids,
                 metrics=metrics,
                 notes=notes,
                 output_files=output_files,
@@ -593,6 +852,7 @@ def register(agent: object | None = None):
                 comparison_group=comparison_group,
                 related_run_ids=related_run_ids,
                 claim_ids=claim_ids,
+                provenance=provenance,
                 metadata=metadata,
             ),
         )
@@ -613,6 +873,7 @@ def register(agent: object | None = None):
         status: str | None = None,
         parameters: dict[str, Any] | None = None,
         input_data: dict[str, Any] | None = None,
+        dataset_version_ids: list[str] | None = None,
         metrics: dict[str, Any] | None = None,
         notes: str | None = None,
         output_files: list[str] | None = None,
@@ -622,6 +883,7 @@ def register(agent: object | None = None):
         related_run_ids: list[str] | None = None,
         claim_ids: list[str] | None = None,
         note_ids: list[str] | None = None,
+        provenance: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         run = _run(
@@ -630,6 +892,7 @@ def register(agent: object | None = None):
                 status=status,
                 parameters=parameters,
                 input_data=input_data,
+                dataset_version_ids=dataset_version_ids,
                 metrics=metrics,
                 notes=notes,
                 output_files=output_files,
@@ -639,6 +902,7 @@ def register(agent: object | None = None):
                 related_run_ids=related_run_ids,
                 claim_ids=claim_ids,
                 note_ids=note_ids,
+                provenance=provenance,
                 metadata=metadata,
             ),
         )
@@ -711,6 +975,30 @@ def register(agent: object | None = None):
             )
         ]
 
+    def research_experiment_capture_provenance(
+        experiment_id: str,
+        command: list[str] | None = None,
+        working_dir: str = "",
+        environment_keys: list[str] | None = None,
+        dependency_fingerprint: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        run = _run(
+            service.capture_experiment_provenance(
+                experiment_id=experiment_id,
+                command=command,
+                working_dir=working_dir,
+                environment_keys=environment_keys,
+                dependency_fingerprint=dependency_fingerprint,
+                metadata=metadata,
+            ),
+        )
+        return run.model_dump(mode="json")
+
+    def research_experiment_replay_plan(experiment_id: str) -> dict[str, Any]:
+        payload = _run(service.get_experiment_replay_plan(experiment_id))
+        return _jsonify(payload)
+
     def research_experiment_heartbeat(
         experiment_id: str,
         summary: str,
@@ -779,6 +1067,13 @@ def register(agent: object | None = None):
             for key, value in payload.items()
         }
 
+    def research_experiment_replay(experiment_id: str) -> dict[str, Any]:
+        from ....research import ResearchWorkflowRuntime
+
+        runtime = ResearchWorkflowRuntime(service=service)
+        payload = _run(runtime.replay_experiment(experiment_id))
+        return _jsonify(payload)
+
     def research_experiment_compare(
         experiment_ids: list[str],
     ) -> dict[str, Any]:
@@ -789,12 +1084,21 @@ def register(agent: object | None = None):
         "research_project_create": research_project_create,
         "research_project_update": research_project_update,
         "research_project_dashboard": research_project_dashboard,
+        "research_project_memory_list": research_project_memory_list,
+        "research_project_memory_create": research_project_memory_create,
+        "research_project_audit": research_project_audit,
+        "research_project_closure": research_project_closure,
+        "research_project_closure_materialize": research_project_closure_materialize,
+        "research_project_closure_execute": research_project_closure_execute,
+        "research_project_package": research_project_package,
         "research_project_blockers_dispatch": research_project_blockers_dispatch,
         "research_project_blockers_execute": research_project_blockers_execute,
         "research_project_blockers_resume": research_project_blockers_resume,
         "research_workflows_list": research_workflows_list,
         "research_workflow_create": research_workflow_create,
         "research_workflow_get": research_workflow_get,
+        "research_workflow_checkpoints": research_workflow_checkpoints,
+        "research_workflow_restore": research_workflow_restore,
         "research_workflow_remediation": research_workflow_remediation,
         "research_workflow_task_get": research_workflow_task_get,
         "research_workflow_task_execute": research_workflow_task_execute,
@@ -807,10 +1111,16 @@ def register(agent: object | None = None):
         "research_notes_search": research_notes_search,
         "research_artifacts_list": research_artifacts_list,
         "research_artifact_upsert": research_artifact_upsert,
+        "research_artifact_relations": research_artifact_relations,
+        "research_artifact_relation_create": research_artifact_relation_create,
+        "research_artifact_lineage": research_artifact_lineage,
         "research_claim_create": research_claim_create,
         "research_claim_attach_evidence": research_claim_attach_evidence,
         "research_claim_update": research_claim_update,
         "research_claim_graph": research_claim_graph,
+        "research_claim_validate": research_claim_validate,
+        "research_dataset_versions": research_dataset_versions,
+        "research_dataset_version_create": research_dataset_version_create,
         "research_experiment_log": research_experiment_log,
         "research_experiment_get": research_experiment_get,
         "research_experiment_contract": research_experiment_contract,
@@ -818,8 +1128,11 @@ def register(agent: object | None = None):
         "research_experiment_update": research_experiment_update,
         "research_experiment_update_execution": research_experiment_update_execution,
         "research_experiment_events": research_experiment_events,
+        "research_experiment_capture_provenance": research_experiment_capture_provenance,
+        "research_experiment_replay_plan": research_experiment_replay_plan,
         "research_experiment_heartbeat": research_experiment_heartbeat,
         "research_experiment_result": research_experiment_result,
         "research_experiment_launch": research_experiment_launch,
+        "research_experiment_replay": research_experiment_replay,
         "research_experiment_compare": research_experiment_compare,
     }

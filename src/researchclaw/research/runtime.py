@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,36 @@ class ResearchWorkflowRuntime:
         return [task for task in workflow.tasks if task.stage == wanted_stage]
 
     @staticmethod
+    def _task_dependencies_satisfied(
+        workflow: ResearchWorkflow,
+        task: WorkflowTask,
+    ) -> bool:
+        wanted = set(str(item).strip() for item in task.depends_on if str(item).strip())
+        if not wanted:
+            return True
+        task_by_id = {item.id: item for item in workflow.tasks}
+        for dependency_id in wanted:
+            dependency = task_by_id.get(dependency_id)
+            if dependency is None or dependency.status not in {"completed", "cancelled"}:
+                return False
+        return True
+
+    @classmethod
+    def _primary_stage_task(
+        cls,
+        workflow: ResearchWorkflow,
+        *,
+        stage_name: str = "",
+    ) -> WorkflowTask | None:
+        stage_tasks = cls._stage_tasks(workflow, stage_name=stage_name)
+        for task in stage_tasks:
+            if task.status in {"completed", "cancelled"}:
+                continue
+            if cls._task_dependencies_satisfied(workflow, task):
+                return task
+        return stage_tasks[0] if stage_tasks else None
+
+    @staticmethod
     def _workflow_fingerprint(workflow: ResearchWorkflow) -> dict[str, Any]:
         return {
             "status": workflow.status,
@@ -160,6 +191,113 @@ class ResearchWorkflowRuntime:
         if len(clean) <= limit:
             return clean
         return clean[: max(0, limit - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _slugify(text: str, *, fallback: str = "item") -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9]+", "-", str(text or "").strip()).strip("-")
+        return normalized.lower() or fallback
+
+    @staticmethod
+    def _tokenize_keywords(text: str) -> list[str]:
+        stopwords = {
+            "with",
+            "from",
+            "that",
+            "this",
+            "into",
+            "their",
+            "about",
+            "using",
+            "there",
+            "which",
+            "before",
+            "after",
+            "while",
+            "where",
+            "have",
+            "has",
+            "were",
+            "been",
+            "being",
+            "more",
+            "than",
+            "into",
+            "will",
+            "should",
+            "could",
+            "across",
+            "between",
+            "under",
+            "over",
+            "across",
+        }
+        return [
+            token
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", str(text or "").lower())
+            if token not in stopwords
+        ]
+
+    @classmethod
+    def _derive_note_themes(cls, notes: list[Any]) -> list[str]:
+        keyword_counts: dict[str, int] = {}
+        for note in notes:
+            tokens = cls._tokenize_keywords(
+                " ".join(
+                    [
+                        str(getattr(note, "title", "") or ""),
+                        str(getattr(note, "content", "") or ""),
+                    ],
+                ),
+            )
+            for token in tokens:
+                keyword_counts[token] = keyword_counts.get(token, 0) + 1
+        top_keywords = [
+            item[0]
+            for item in sorted(
+                keyword_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:6]
+        ]
+        if not top_keywords:
+            return []
+        themes: list[str] = []
+        chunk_size = 2
+        for index in range(0, len(top_keywords), chunk_size):
+            group = top_keywords[index : index + chunk_size]
+            if not group:
+                continue
+            if len(group) == 1:
+                themes.append(f"- Repeated emphasis on '{group[0]}' appears across the current source notes.")
+            else:
+                themes.append(
+                    f"- Shared discussion around '{group[0]}' and '{group[1]}' recurs across the selected notes.",
+                )
+        return themes[:3]
+
+    @classmethod
+    def _derive_hypothesis_phrases(cls, notes: list[Any], *, limit: int = 3) -> list[str]:
+        phrases: list[str] = []
+        seen: set[str] = set()
+        for note in notes:
+            content = str(getattr(note, "content", "") or "")
+            for raw_line in content.splitlines():
+                line = raw_line.strip(" -\t")
+                if not line or len(line) < 20:
+                    continue
+                lowered = line.lower()
+                if lowered.startswith(("title:", "authors:", "venue:", "year:", "reference:")):
+                    continue
+                tokens = cls._tokenize_keywords(line)
+                if not tokens:
+                    continue
+                phrase = " ".join(tokens[: min(4, len(tokens))]).strip()
+                if not phrase or phrase in seen:
+                    continue
+                seen.add(phrase)
+                phrases.append(phrase)
+                if len(phrases) >= limit:
+                    return phrases
+        return phrases
 
     @staticmethod
     def _parse_iso(value: str | None) -> datetime | None:
@@ -2132,6 +2270,18 @@ class ResearchWorkflowRuntime:
                 ),
             },
         )
+        await self._service.capture_experiment_provenance(
+            experiment_id=experiment.id,
+            command=command,
+            working_dir=str(working_dir),
+            environment_keys=sorted(configured_environment.keys()),
+            metadata={
+                "captured_by": "local_execution_process",
+                "execution_mode": mode,
+                "stdout_path": str(stdout_path),
+                "stderr_path": str(stderr_path),
+            },
+        )
         updated_experiment, _ = await self._apply_result_bundle_artifacts(
             experiment=result["experiment"],
             bundle_info=bundle_info,
@@ -2171,6 +2321,23 @@ class ResearchWorkflowRuntime:
             "mode": mode,
             "reason": "inline execution is handled by the structured worker",
         }
+
+    async def replay_experiment(self, experiment_id: str) -> dict[str, Any]:
+        plan = await self._service.get_experiment_replay_plan(experiment_id)
+        experiment = plan["experiment"]
+        mode = str(plan.get("execution_mode") or "")
+        if mode == "inline":
+            raise ValueError(
+                f"Experiment {experiment.id} cannot be replayed from inline mode without a concrete execution binding.",
+            )
+        await self._service.capture_experiment_provenance(
+            experiment_id=experiment.id,
+            command=list(plan.get("command", []) or []),
+            working_dir=str(plan.get("working_dir", "") or ""),
+            environment_keys=list(plan.get("environment_keys", []) or []),
+            metadata={"replay_requested": True},
+        )
+        return await self.execute_experiment(experiment.id)
 
     async def _reconcile_experiment_contract_followup_task(
         self,
@@ -2475,7 +2642,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for literature_search stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="literature_search")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for literature_search stage")
+        task_id = primary_task.id
 
         query = self._build_search_query(project=project, workflow=workflow)
         raw_sources = [
@@ -2625,7 +2795,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for paper_reading stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="paper_reading")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for paper_reading stage")
+        task_id = primary_task.id
 
         paper_artifacts = await self._service.list_artifacts(
             project_id=project.id,
@@ -2759,7 +2932,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for note_synthesis stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="note_synthesis")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for note_synthesis stage")
+        task_id = primary_task.id
 
         paper_notes = await self._service.list_notes(
             project_id=project.id,
@@ -2821,6 +2997,9 @@ class ResearchWorkflowRuntime:
                 + (f" | {reference}" if reference and reference != "-" else "")
                 + (f"\n  {summary_text}" if summary_text else "")
             )
+        emerging_themes = self._derive_note_themes(selected[:6]) or [
+            "- The selected notes contain overlapping terminology, but stronger synthesis is still required before the workflow can claim a clean literature map.",
+        ]
 
         synthesis_artifact = await self._service.upsert_artifact(
             project_id=project.id,
@@ -2850,9 +3029,7 @@ class ResearchWorkflowRuntime:
                     *observations,
                     "",
                     "Emerging themes",
-                    "- The literature already covers multiple relevant methods, but the evidence is fragmented across papers and summaries.",
-                    "- Baseline strength, evaluation setup, and transferable assumptions remain central comparison points before stronger claims can be made.",
-                    "- The next step should convert these reading notes into falsifiable hypotheses and concrete experiment directions.",
+                    *emerging_themes,
                 ],
             ),
             note_type="idea_note",
@@ -2866,8 +3043,30 @@ class ResearchWorkflowRuntime:
             metadata={
                 "stage": "note_synthesis",
                 "source_note_ids": source_note_ids,
+                "emerging_themes": emerging_themes,
             },
         )
+        await self._service.create_project_memory(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            stage="note_synthesis",
+            title=f"Synthesis themes · {workflow.title}",
+            content="\n".join(emerging_themes),
+            entry_kind="fact",
+            note_ids=[synthesis_note.id, *source_note_ids],
+            artifact_ids=[synthesis_artifact.id, *source_artifact_ids],
+            tags=["note_synthesis", "themes"],
+            metadata={"source_note_ids": source_note_ids},
+        )
+        for source_artifact_id in source_artifact_ids:
+            await self._service.create_artifact_relation(
+                project_id=project.id,
+                source_artifact_id=synthesis_artifact.id,
+                target_artifact_id=source_artifact_id,
+                relation_type="summarizes",
+                workflow_id=workflow.id,
+                summary="Synthesis summary derived from source reading artifacts.",
+            )
         summary = f"Synthesized {len(source_note_ids)} paper note(s) into one thematic note."
         return await self._finalize_stage_worker(
             project=project,
@@ -2903,7 +3102,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for hypothesis_queue stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="hypothesis_queue")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for hypothesis_queue stage")
+        task_id = primary_task.id
 
         synthesis_notes = await self._service.list_notes(
             project_id=project.id,
@@ -2946,21 +3148,28 @@ class ResearchWorkflowRuntime:
             artifact_type="paper",
             limit=5,
         )
-        paper_titles = [artifact.title for artifact in paper_artifacts[:3]]
         topic = workflow.goal or workflow.title
+        candidate_phrases = self._derive_hypothesis_phrases(source_notes[:5], limit=4)
+        if not candidate_phrases:
+            summary = "Could not derive grounded hypothesis candidates from the current synthesis notes."
+            return await self._finalize_stage_worker(
+                project=project,
+                workflow=workflow,
+                task_id=task_id,
+                summary=summary,
+                detail=summary,
+                note_ids=[],
+                artifact_ids=source_artifact_ids,
+                trigger=trigger,
+                trigger_reason=trigger_reason,
+                status="blocked",
+            )
         candidate_hypotheses = [
             (
-                f"Evaluation and baseline choices likely account for a substantial share of the reported gains in {topic}.",
-                "baseline_risk",
-            ),
-            (
-                f"A focused comparison using insights from {paper_titles[0] if paper_titles else 'the shortlisted literature'} will likely expose at least one unresolved failure mode in {topic}.",
-                "failure_mode_probe",
-            ),
-            (
-                f"Ablating the core assumptions surfaced during note synthesis will likely clarify which evidence is robust enough to support claims about {topic}.",
-                "assumption_ablation",
-            ),
+                f"The impact of '{phrase}' on {topic} should be tested with a controlled comparison.",
+                self._slugify(phrase, fallback="claim_probe"),
+            )
+            for phrase in candidate_phrases
         ]
         existing_claims = await self._service.list_claims(
             project_id=project.id,
@@ -3044,8 +3253,30 @@ class ResearchWorkflowRuntime:
             metadata={
                 "stage": "hypothesis_queue",
                 "claim_ids": claim_ids,
+                "source_phrases": candidate_phrases,
             },
         )
+        await self._service.create_project_memory(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            stage="hypothesis_queue",
+            title=f"Open questions · {workflow.title}",
+            content="\n".join(f"- {text}" for text, _ in candidate_hypotheses),
+            entry_kind="open_question",
+            note_ids=[queue_note.id, *source_note_ids],
+            claim_ids=claim_ids,
+            artifact_ids=[hypothesis_artifact.id, *source_artifact_ids],
+            tags=["hypothesis_queue", "open_questions"],
+        )
+        for source_artifact_id in source_artifact_ids:
+            await self._service.create_artifact_relation(
+                project_id=project.id,
+                source_artifact_id=hypothesis_artifact.id,
+                target_artifact_id=source_artifact_id,
+                relation_type="derived_from",
+                workflow_id=workflow.id,
+                summary="Hypothesis queue derived from synthesis artifacts.",
+            )
         summary = f"Queued {len(claim_ids)} draft hypothesis claim(s) from synthesized notes."
         return await self._finalize_stage_worker(
             project=project,
@@ -3075,7 +3306,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for experiment_plan stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="experiment_plan")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for experiment_plan stage")
+        task_id = primary_task.id
 
         claims = await self._service.list_claims(
             project_id=project.id,
@@ -3097,117 +3331,110 @@ class ResearchWorkflowRuntime:
                 status="blocked",
             )
 
-        claim_by_kind = {
-            str((claim.metadata or {}).get("hypothesis_kind", "") or "").strip(): claim
-            for claim in claims
-        }
         all_claim_ids = self._unique_strings([claim.id for claim in claims])
+        dataset_versions = await self._service.list_dataset_versions(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            limit=10,
+        )
+        if not dataset_versions:
+            dataset_versions = await self._service.list_dataset_versions(
+                project_id=project.id,
+                limit=10,
+            )
+        if not dataset_versions:
+            dataset_task = self._find_task_by_kind(
+                workflow,
+                stage_name="experiment_plan",
+                task_kind="register_dataset_version",
+            )
+            if dataset_task is None:
+                workflow = await self._service.add_workflow_task(
+                    workflow_id=workflow.id,
+                    stage="experiment_plan",
+                    title="Register a dataset version",
+                    description=(
+                        "Create at least one versioned dataset asset before planning claim-validation experiments."
+                    ),
+                    metadata={
+                        "task_kind": "register_dataset_version",
+                    },
+                )
+            summary = "A versioned dataset asset is required before experiment planning can continue."
+            return await self._finalize_stage_worker(
+                project=project,
+                workflow=workflow,
+                task_id=task_id,
+                summary=summary,
+                detail=summary,
+                note_ids=[],
+                artifact_ids=[],
+                claim_ids=all_claim_ids,
+                trigger=trigger,
+                trigger_reason=trigger_reason,
+                status="blocked",
+            )
+        preferred_dataset = dataset_versions[0]
         existing_runs = await self._service.list_experiments(
             project_id=project.id,
             workflow_id=workflow.id,
             limit=20,
         )
-        existing_by_kind = {
-            self._experiment_kind(run): run
-            for run in existing_runs
-            if self._experiment_kind(run)
-        }
-
-        baseline = existing_by_kind.get("baseline")
-        if baseline is None:
-            baseline = await self._service.log_experiment(
-                project_id=project.id,
-                workflow_id=workflow.id,
-                name=f"Baseline benchmark · {workflow.title}",
-                status="planned",
-                parameters={
-                    "dataset": "benchmark_suite",
-                    "split": "validation",
-                    "seed": 42,
-                    "metric_focus": "robust_accuracy",
-                },
-                input_data={
-                    "workflow_goal": workflow.goal or workflow.title,
-                    "source_claim_ids": all_claim_ids,
-                },
-                notes="Primary baseline run for the shortlisted hypotheses.",
-                comparison_group="core_benchmark",
-                claim_ids=all_claim_ids,
-                metadata={
-                    "stage": "experiment_plan",
-                    "experiment_kind": "baseline",
-                },
-            )
-
-        ablation = existing_by_kind.get("ablation")
-        ablation_claim = claim_by_kind.get("assumption_ablation")
-        if ablation is None:
-            ablation = await self._service.log_experiment(
-                project_id=project.id,
-                workflow_id=workflow.id,
-                name=f"Assumption ablation · {workflow.title}",
-                status="planned",
-                parameters={
-                    "dataset": "benchmark_suite",
-                    "seed": 42,
-                    "remove_assumption": True,
-                    "metric_focus": "robust_accuracy",
-                },
-                input_data={
-                    "workflow_goal": workflow.goal or workflow.title,
-                    "baseline_run_id": baseline.id,
-                },
-                notes="Ablate the core assumption surfaced during note synthesis.",
-                baseline_of=baseline.id,
-                comparison_group="assumption_ablation",
-                claim_ids=self._unique_strings(
-                    [
-                        ablation_claim.id if ablation_claim is not None else "",
-                    ],
+        planned_runs: list[Any] = []
+        for claim in claims[:5]:
+            existing = next(
+                (
+                    run
+                    for run in existing_runs
+                    if claim.id in set(run.claim_ids)
+                    and str((run.metadata or {}).get("stage", "") or "").strip()
+                    == "experiment_plan"
                 ),
-                metadata={
-                    "stage": "experiment_plan",
-                    "experiment_kind": "ablation",
-                    "target_hypothesis_kind": "assumption_ablation",
-                },
+                None,
             )
+            if existing is None:
+                experiment_parameters = dict(
+                    dict((claim.metadata or {}).get("experiment_parameters", {}) or {}),
+                )
+                experiment_parameters.setdefault(
+                    "dataset_version_id",
+                    preferred_dataset.id,
+                )
+                if preferred_dataset.split_spec:
+                    for key, value in preferred_dataset.split_spec.items():
+                        experiment_parameters.setdefault(str(key), value)
+                experiment_parameters.setdefault(
+                    "metric_focus",
+                    str(preferred_dataset.metadata.get("primary_metric", "") or "").strip()
+                    or "report_real_metric",
+                )
+                existing = await self._service.log_experiment(
+                    project_id=project.id,
+                    workflow_id=workflow.id,
+                    name=f"Validate claim · {self._truncate_summary(claim.text, limit=64)}",
+                    status="planned",
+                    parameters=experiment_parameters,
+                    input_data={
+                        "workflow_goal": workflow.goal or workflow.title,
+                        "dataset_version_id": preferred_dataset.id,
+                        "target_claim_id": claim.id,
+                    },
+                    dataset_version_ids=[preferred_dataset.id],
+                    notes=f"Validate claim with registered dataset assets: {claim.text}",
+                    comparison_group=self._slugify(claim.text, fallback="claim-probe"),
+                    claim_ids=[claim.id],
+                    metadata={
+                        "stage": "experiment_plan",
+                        "experiment_kind": str(
+                            (claim.metadata or {}).get("hypothesis_kind", "") or "claim_probe",
+                        ).strip()
+                        or "claim_probe",
+                        "target_claim_id": claim.id,
+                        "dataset_version_id": preferred_dataset.id,
+                    },
+                )
+            planned_runs.append(existing)
 
-        stress = existing_by_kind.get("stress_test")
-        failure_claim = claim_by_kind.get("failure_mode_probe")
-        baseline_risk_claim = claim_by_kind.get("baseline_risk")
-        if stress is None:
-            stress = await self._service.log_experiment(
-                project_id=project.id,
-                workflow_id=workflow.id,
-                name=f"Failure-mode probe · {workflow.title}",
-                status="planned",
-                parameters={
-                    "dataset": "benchmark_suite",
-                    "seed": 42,
-                    "slice": "hard_shift",
-                    "metric_focus": "accuracy",
-                },
-                input_data={
-                    "workflow_goal": workflow.goal or workflow.title,
-                    "baseline_run_id": baseline.id,
-                },
-                notes="Probe the stressed evaluation slice to surface likely failure modes.",
-                comparison_group="failure_mode_probe",
-                related_run_ids=[baseline.id],
-                claim_ids=self._unique_strings(
-                    [
-                        failure_claim.id if failure_claim is not None else "",
-                        baseline_risk_claim.id if baseline_risk_claim is not None else "",
-                    ],
-                ),
-                metadata={
-                    "stage": "experiment_plan",
-                    "experiment_kind": "stress_test",
-                    "target_hypothesis_kind": "failure_mode_probe",
-                },
-            )
-
-        planned_runs = [baseline, ablation, stress]
         planned_runs = [
             await self._apply_workflow_runner_template(
                 workflow=workflow,
@@ -3242,6 +3469,7 @@ class ResearchWorkflowRuntime:
                 "stage": "experiment_plan",
                 "experiment_ids": run_ids,
                 "claim_ids": all_claim_ids,
+                "dataset_version_ids": [preferred_dataset.id],
             },
         )
         plan_note = await self._service.create_note(
@@ -3252,14 +3480,15 @@ class ResearchWorkflowRuntime:
                 [
                     f"Topic: {workflow.goal or workflow.title}",
                     f"Planned runs: {len(run_ids)}",
+                    f"Dataset version: {preferred_dataset.name} {preferred_dataset.version_label}",
                     "",
                     "Planned experiment queue",
                     *execution_rows,
                     "",
                     "Success criteria",
-                    "- Establish a baseline reference point on the benchmark suite.",
-                    "- Quantify the drop from ablating the core assumption.",
-                    "- Stress the evaluation slice to surface likely failure modes.",
+                    "- Each planned run must report real metrics and output files against the registered dataset version.",
+                    "- Each claim should map to at least one experiment run and one traceable evidence artifact.",
+                    "- No synthetic metrics or placeholder outputs may be used to leave experiment_run.",
                     "",
                     "Execution defaults",
                     *(
@@ -3283,8 +3512,18 @@ class ResearchWorkflowRuntime:
             metadata={
                 "stage": "experiment_plan",
                 "experiment_ids": run_ids,
+                "dataset_version_ids": [preferred_dataset.id],
             },
         )
+        if preferred_dataset.artifact_id:
+            await self._service.create_artifact_relation(
+                project_id=project.id,
+                source_artifact_id=plan_artifact.id,
+                target_artifact_id=preferred_dataset.artifact_id,
+                relation_type="uses",
+                workflow_id=workflow.id,
+                summary="Experiment plan uses the registered dataset version.",
+            )
         summary = f"Planned {len(run_ids)} experiment run(s) across {len(all_claim_ids)} hypothesis claim(s)."
         return await self._finalize_stage_worker(
             project=project,
@@ -3299,36 +3538,6 @@ class ResearchWorkflowRuntime:
             trigger_reason=trigger_reason,
             status="completed",
         )
-
-    @staticmethod
-    def _planned_run_metrics(experiment_kind: str) -> dict[str, float]:
-        if experiment_kind == "baseline":
-            return {
-                "accuracy": 0.84,
-                "robust_accuracy": 0.78,
-                "calibration_error": 0.07,
-                "delta_vs_baseline": 0.0,
-            }
-        if experiment_kind == "ablation":
-            return {
-                "accuracy": 0.79,
-                "robust_accuracy": 0.69,
-                "calibration_error": 0.10,
-                "delta_vs_baseline": -0.09,
-            }
-        if experiment_kind == "stress_test":
-            return {
-                "accuracy": 0.74,
-                "robust_accuracy": 0.61,
-                "calibration_error": 0.13,
-                "delta_vs_baseline": -0.10,
-            }
-        return {
-            "accuracy": 0.8,
-            "robust_accuracy": 0.72,
-            "calibration_error": 0.1,
-            "delta_vs_baseline": -0.04,
-        }
 
     async def _execute_experiment_run_worker(
         self,
@@ -3363,8 +3572,12 @@ class ResearchWorkflowRuntime:
         planned_runs = [
             run
             for run in runs
-            if self._experiment_kind(run) in {"baseline", "ablation", "stress_test"}
+            if str((run.metadata or {}).get("stage", "") or "").strip() == "experiment_plan"
         ]
+        if not planned_runs:
+            # Allow manually registered workflow experiments to participate in the
+            # structured loop when no planner-tagged runs exist yet.
+            planned_runs = list(runs)
         if not planned_runs:
             summary = "No planned experiments are available for the experiment_run stage."
             return await self._finalize_stage_worker(
@@ -3385,9 +3598,10 @@ class ResearchWorkflowRuntime:
         artifact_ids: list[str] = []
         claim_ids: list[str] = []
         pending_external_runs: list[Any] = []
+        pending_manual_runs: list[Any] = []
         failed_local_runs: list[Any] = []
         contract_failures: list[dict[str, Any]] = []
-        for run in planned_runs[:3]:
+        for run in planned_runs[:5]:
             kind = self._experiment_kind(run) or "comparison"
             execution_mode = self._experiment_execution_mode(run)
             if execution_mode in {"command", "notebook"}:
@@ -3396,6 +3610,15 @@ class ResearchWorkflowRuntime:
                 else:
                     launch_payload = await self.execute_experiment(run.id)
                     updated = launch_payload["experiment"]
+                await self._service.capture_experiment_provenance(
+                    experiment_id=updated.id,
+                    command=list(updated.execution.command or []),
+                    working_dir=str(updated.execution.working_dir or ""),
+                    metadata={
+                        "captured_by": "experiment_run_worker",
+                        "execution_mode": execution_mode,
+                    },
+                )
                 claim_ids.extend(updated.claim_ids)
                 artifact_ids.extend(updated.artifact_ids)
                 if updated.status != "completed":
@@ -3462,28 +3685,39 @@ class ResearchWorkflowRuntime:
                         f"- {run.name}: external execution is still {run.status}"
                     )
                     continue
-            if run.status == "completed" and run.metrics and run.output_files:
+            if run.status == "completed":
+                has_real_assets = bool(
+                    getattr(run, "metrics", None)
+                    or getattr(run, "output_files", None)
+                    or getattr(run, "artifact_ids", None)
+                )
+                if execution_mode == "inline" and not has_real_assets:
+                    pending_manual_runs.append(run)
+                    claim_ids.extend(run.claim_ids)
+                    artifact_ids.extend(run.artifact_ids)
+                    execution_rows.append(
+                        f"- {run.name}: awaiting real metrics/output files for inline execution"
+                        + (
+                            f" | dataset_versions={len(getattr(run, 'dataset_version_ids', []) or [])}"
+                            if getattr(run, "dataset_version_ids", None)
+                            else ""
+                        )
+                    )
+                    continue
                 updated = run
             else:
-                updated = await self._service.update_experiment(
-                    experiment_id=run.id,
-                    status="completed",
-                    metrics=self._planned_run_metrics(kind),
-                    notes=(
-                        "Executed via the structured experiment_run worker with "
-                        f"the '{kind}' template."
-                    ),
-                    output_files=[
-                        f"research_outputs/{workflow.id}/{run.id}-metrics.json",
-                        f"research_outputs/{workflow.id}/{run.id}-curve.png",
-                    ],
-                    metadata={
-                        "stage": "experiment_run",
-                        "experiment_kind": kind,
-                        "execution_mode": execution_mode,
-                        "executor": "structured_stage_worker",
-                    },
+                pending_manual_runs.append(run)
+                claim_ids.extend(run.claim_ids)
+                artifact_ids.extend(run.artifact_ids)
+                execution_rows.append(
+                    f"- {run.name}: awaiting real metrics/output files for inline execution"
+                    + (
+                        f" | dataset_versions={len(getattr(run, 'dataset_version_ids', []) or [])}"
+                        if getattr(run, "dataset_version_ids", None)
+                        else ""
+                    )
                 )
+                continue
             claim_ids.extend(updated.claim_ids)
             artifact_ids.extend(updated.artifact_ids)
             validation = await self._service.get_experiment_artifact_contract_validation(
@@ -3520,6 +3754,28 @@ class ResearchWorkflowRuntime:
                 task_id=task_id,
                 summary=summary,
                 detail="\n".join([summary, "", *execution_rows]),
+                note_ids=[],
+                artifact_ids=self._unique_strings(artifact_ids),
+                claim_ids=self._unique_strings(claim_ids),
+                trigger=trigger,
+                trigger_reason=trigger_reason,
+                status="blocked",
+            )
+
+        if pending_manual_runs:
+            manual_rows = [
+                f"- {run.name}: register real metrics, outputs, or a result bundle before analysis."
+                for run in pending_manual_runs
+            ]
+            summary = (
+                f"{len(pending_manual_runs)} experiment run(s) are still waiting for real inline results."
+            )
+            return await self._finalize_stage_worker(
+                project=project,
+                workflow=workflow,
+                task_id=task_id,
+                summary=summary,
+                detail="\n".join([summary, "", *execution_rows, "", *manual_rows]),
                 note_ids=[],
                 artifact_ids=self._unique_strings(artifact_ids),
                 claim_ids=self._unique_strings(claim_ids),
@@ -3791,7 +4047,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for result_analysis stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="result_analysis")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for result_analysis stage")
+        task_id = primary_task.id
 
         completed_runs = await self._service.list_experiments(
             project_id=project.id,
@@ -3819,52 +4078,103 @@ class ResearchWorkflowRuntime:
                 status="blocked",
             )
 
-        baseline = next(
-            (run for run in completed_runs if self._experiment_kind(run) == "baseline"),
-            completed_runs[0],
-        )
-        ablation = next(
-            (run for run in completed_runs if self._experiment_kind(run) == "ablation"),
-            baseline,
-        )
-        stress = next(
-            (run for run in completed_runs if self._experiment_kind(run) == "stress_test"),
-            baseline,
-        )
-        baseline_accuracy = self._metric_number(baseline, "accuracy", "robust_accuracy") or 0.0
-        baseline_robust = self._metric_number(baseline, "robust_accuracy", "accuracy") or 0.0
-        ablation_robust = self._metric_number(ablation, "robust_accuracy", "accuracy") or baseline_robust
-        stress_accuracy = self._metric_number(stress, "accuracy", "robust_accuracy") or baseline_accuracy
-        ablation_gap = baseline_robust - ablation_robust
-        stress_drop = baseline_accuracy - stress_accuracy
+        existing_claim_graphs = {
+            claim.id: await self._service.get_claim_graph(claim.id)
+            for claim in claims
+        }
+        for claim in claims:
+            related_run = next(
+                (
+                    run
+                    for run in completed_runs
+                    if claim.id in set(getattr(run, "claim_ids", []) or [])
+                ),
+                None,
+            )
+            if related_run is None:
+                continue
+            existing_evidence = existing_claim_graphs[claim.id].get("evidences", [])
+            if any(
+                str(getattr(item.source, "source_type", "") or "").strip() == "experiment"
+                and str(getattr(item.source, "source_id", "") or "").strip() == related_run.id
+                for item in existing_evidence
+            ):
+                continue
+            metric_preview = self._truncate_summary(
+                json.dumps(related_run.metrics, ensure_ascii=False, sort_keys=True),
+                limit=180,
+            )
+            await self._service.attach_evidence(
+                project_id=project.id,
+                claim_ids=[claim.id],
+                evidence_type="experiment_result",
+                summary=(
+                    f"Completed experiment '{related_run.name}' reported "
+                    f"{metric_preview or 'real execution outputs'}."
+                ),
+                source_type="experiment_result",
+                source_id=related_run.id,
+                title=related_run.name,
+                locator="completed run",
+                workflow_id=workflow.id,
+                experiment_id=related_run.id,
+                metadata={
+                    "stage": "result_analysis",
+                    "metrics": dict(getattr(related_run, "metrics", {}) or {}),
+                    "output_files": list(getattr(related_run, "output_files", []) or []),
+                },
+            )
 
         compare = await self._service.compare_experiments([run.id for run in completed_runs])
+        validations = await self._service.validate_project_claims(
+            project_id=project.id,
+            workflow_id=workflow.id,
+            apply_status=False,
+        )
+        validation_by_claim = {
+            str(item.get("claim_id", "") or ""): item
+            for item in validations
+        }
         analysis_rows: list[str] = []
         decisions: list[dict[str, Any]] = []
         for claim in claims:
-            kind = str((claim.metadata or {}).get("hypothesis_kind", "") or "").strip()
-            related_run = baseline
-            if kind == "baseline_risk":
-                supported = ablation_gap >= 0.07 or stress_drop >= 0.08
-                rationale = (
-                    f"Baseline vs ablation gap is {ablation_gap:.2f} in robust accuracy, "
-                    f"and the stressed slice drops accuracy by {stress_drop:.2f}."
+            validation = validation_by_claim.get(claim.id, {})
+            related_run = next(
+                (
+                    run
+                    for run in completed_runs
+                    if claim.id in set(getattr(run, "claim_ids", []) or [])
+                ),
+                completed_runs[0],
+            )
+            reason_lines = [
+                str(item).strip()
+                for item in list(validation.get("reasons", []) or [])
+                if str(item).strip()
+            ]
+            if related_run.metrics:
+                metric_preview = self._truncate_summary(
+                    json.dumps(related_run.metrics, ensure_ascii=False, sort_keys=True),
+                    limit=180,
                 )
-                related_run = stress
-            elif kind == "failure_mode_probe":
-                supported = stress_drop >= 0.08
-                rationale = f"The stressed slice reduces accuracy by {stress_drop:.2f} from the baseline."
-                related_run = stress
-            elif kind == "assumption_ablation":
-                supported = ablation_gap >= 0.07
-                rationale = f"Ablating the core assumption reduces robust accuracy by {ablation_gap:.2f}."
-                related_run = ablation
+                reason_lines.append(
+                    f"Linked run '{related_run.name}' reported metrics {metric_preview}.",
+                )
             else:
-                supported = len(completed_runs) >= 2
-                rationale = f"Compared {len(completed_runs)} completed runs for this workflow."
-
-            status = "supported" if supported else "needs_review"
-            confidence = 0.84 if supported else 0.58
+                reason_lines.append(
+                    f"Linked run '{related_run.name}' is completed but does not yet expose a metric payload.",
+                )
+            rationale = " ".join(reason_lines)
+            status = str(validation.get("status", "needs_review") or "needs_review").strip()
+            confidence = (
+                0.84
+                if status == "supported"
+                else 0.62
+                if status == "needs_review"
+                else 0.35
+                if status == "disputed"
+                else None
+            )
             decisions.append(
                 {
                     "claim": claim,
@@ -3872,7 +4182,9 @@ class ResearchWorkflowRuntime:
                     "confidence": confidence,
                     "rationale": rationale,
                     "related_run": related_run,
-                    "hypothesis_kind": kind,
+                    "hypothesis_kind": str(
+                        dict(getattr(claim, "metadata", {}) or {}).get("hypothesis_kind", "") or "",
+                    ).strip(),
                 },
             )
             analysis_rows.append(f"- [{status}] {claim.text}\n  {rationale}")
@@ -3896,9 +4208,7 @@ class ResearchWorkflowRuntime:
             metadata={
                 "stage": "result_analysis",
                 "comparison": compare,
-                "baseline_run_id": baseline.id,
-                "ablation_gap": round(ablation_gap, 4),
-                "stress_drop": round(stress_drop, 4),
+                "validations": validations,
             },
         )
         analysis_note = await self._service.create_note(
@@ -3908,8 +4218,7 @@ class ResearchWorkflowRuntime:
             content="\n".join(
                 [
                     f"Completed runs: {len(completed_runs)}",
-                    f"Baseline robust-accuracy gap vs ablation: {ablation_gap:.2f}",
-                    f"Baseline accuracy drop on stressed slice: {stress_drop:.2f}",
+                    f"Claims reviewed: {len(claims)}",
                     "",
                     "Claim review",
                     *analysis_rows,
@@ -3943,6 +4252,7 @@ class ResearchWorkflowRuntime:
                         "rationale": decision["rationale"],
                         "related_run_id": decision["related_run"].id,
                     },
+                    "validation": validation_by_claim.get(decision["claim"].id, {}),
                 },
             )
             await self._service.attach_evidence(
@@ -3997,7 +4307,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for writing_tasks stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="writing_tasks")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for writing_tasks stage")
+        task_id = primary_task.id
 
         supported_claims = await self._service.list_claims(
             project_id=project.id,
@@ -4129,7 +4442,10 @@ class ResearchWorkflowRuntime:
             stage_tasks = self._stage_tasks(workflow)
         if not stage_tasks:
             raise RuntimeError("No task found for review_and_followup stage")
-        task_id = stage_tasks[0].id
+        primary_task = self._primary_stage_task(workflow, stage_name="review_and_followup")
+        if primary_task is None:
+            raise RuntimeError("No actionable task found for review_and_followup stage")
+        task_id = primary_task.id
 
         claims = await self._service.list_claims(
             project_id=project.id,
@@ -4669,6 +4985,134 @@ class ResearchWorkflowRuntime:
 
         candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3].id))
         return [(workflow, context) for _, _, _, workflow, context in candidates]
+
+    async def _select_project_blocker_candidates(
+        self,
+        project_id: str,
+        *,
+        workflow_ids: list[str] | None = None,
+    ) -> list[tuple[ResearchWorkflow, dict[str, Any]]]:
+        candidates = await self._list_project_blocker_candidates(project_id)
+        clean_workflow_ids = [
+            str(item or "").strip()
+            for item in list(workflow_ids or [])
+            if str(item or "").strip()
+        ]
+        if not clean_workflow_ids:
+            return candidates
+        wanted = set(clean_workflow_ids)
+        return [
+            (workflow, context)
+            for workflow, context in candidates
+            if workflow.id in wanted
+        ]
+
+    async def apply_project_blocker_tasks(
+        self,
+        project_id: str,
+        *,
+        workflow_ids: list[str],
+        mode: str = "dispatch",
+        task_limit: int = 2,
+    ) -> dict[str, Any]:
+        clean_workflow_ids = [
+            str(item or "").strip()
+            for item in list(workflow_ids or [])
+            if str(item or "").strip()
+        ]
+        if not clean_workflow_ids:
+            raise ValueError("No blocker workflow ids provided.")
+        action_mode = str(mode or "dispatch").strip().lower() or "dispatch"
+        if action_mode not in {"dispatch", "execute", "resume"}:
+            raise ValueError(f"Unsupported blocker mode: {mode}")
+
+        project = await self._service.get_project(project_id)
+        candidates = await self._select_project_blocker_candidates(
+            project_id,
+            workflow_ids=clean_workflow_ids,
+        )
+        if not candidates:
+            dashboard = await self._service.get_project_dashboard(project_id)
+            return {
+                "project": project,
+                "dashboard": dashboard,
+                "mode": action_mode,
+                "selected_workflow_ids": clean_workflow_ids,
+                "requested_count": len(clean_workflow_ids),
+                "matched_count": 0,
+                "applied_count": 0,
+                "workflow_results": [],
+                "dispatched_count": 0,
+                "executed_count": 0,
+                "resumed_count": 0,
+                "skipped": True,
+                "reason": "No matching blocker workflows were found.",
+            }
+
+        results: list[dict[str, Any]] = []
+        for workflow, context in candidates:
+            if action_mode == "dispatch":
+                if not any(
+                    bool(task.get("can_dispatch", False))
+                    for task in list(context.get("remediation_tasks", []) or [])
+                ):
+                    continue
+                batch = await self.dispatch_workflow_remediation_tasks(
+                    workflow.id,
+                    limit=task_limit,
+                )
+                results.append(batch)
+                continue
+            if action_mode == "execute":
+                if not any(
+                    bool(task.get("can_execute", False))
+                    for task in list(context.get("remediation_tasks", []) or [])
+                ):
+                    continue
+                batch = await self.execute_workflow_remediation_tasks(
+                    workflow.id,
+                    limit=task_limit,
+                )
+                results.append(batch)
+                continue
+            if not bool(context.get("ready_for_retry", False)):
+                continue
+            result = await self.execute_workflow_step(
+                workflow.id,
+                agent_id=workflow.bindings.agent_id,
+                session_id=workflow.bindings.session_id,
+                trigger="manual",
+                trigger_reason="project_blocker_resume",
+                prefer_stage_worker=True,
+            )
+            result["ok"] = not bool(result.get("skipped"))
+            results.append(result)
+
+        dashboard = await self._service.get_project_dashboard(project_id)
+        dispatched_count = sum(int(item.get("dispatched_count") or 0) for item in results)
+        executed_count = sum(int(item.get("executed_count") or 0) for item in results)
+        resumed_count = sum(1 for item in results if item.get("ok"))
+        if action_mode == "dispatch":
+            reason = "Selected blocker workflows have no dispatchable remediation tasks."
+        elif action_mode == "execute":
+            reason = "Selected blocker workflows have no executable remediation tasks."
+        else:
+            reason = "Selected blocker workflows are not ready to resume."
+        return {
+            "project": project,
+            "dashboard": dashboard,
+            "mode": action_mode,
+            "selected_workflow_ids": clean_workflow_ids,
+            "requested_count": len(clean_workflow_ids),
+            "matched_count": len(candidates),
+            "applied_count": len(results),
+            "workflow_results": results,
+            "dispatched_count": dispatched_count,
+            "executed_count": executed_count,
+            "resumed_count": resumed_count,
+            "skipped": not results,
+            "reason": reason if not results else "",
+        }
 
     async def dispatch_project_blocker_tasks(
         self,
