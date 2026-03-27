@@ -47,6 +47,7 @@ import type {
   ResearchWorkflowTaskActionResult,
   SessionItem,
   SkillItem,
+  SkillRepositoryImportResult,
   StreamEvent,
   WorkspaceFileContent,
   WorkspaceFileItem,
@@ -1606,6 +1607,45 @@ export async function disableSkill(skillName: string): Promise<void> {
     method: "POST",
     body: { skill_name: skillName },
   });
+}
+
+export async function importSkillsFromGitHubRepo(payload: {
+  repoUrl: string;
+  ref?: string;
+  overwrite?: boolean;
+  rewriteWithModel?: boolean;
+}): Promise<SkillRepositoryImportResult> {
+  const res = await fetch("/api/skills/import-repo", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      repo_url: payload.repoUrl,
+      ref: payload.ref,
+      enable: true,
+      overwrite: payload.overwrite ?? true,
+      rewrite_paths: true,
+      rewrite_with_model: payload.rewriteWithModel ?? true,
+    }),
+  });
+
+  if (!res.ok) {
+    let message = "Import skills from GitHub failed";
+    try {
+      const data = (await res.json()) as { detail?: string };
+      if (data.detail) message = data.detail;
+    } catch {
+      // fall back to the generic message
+    }
+    throw new Error(message);
+  }
+
+  const data = (await res.json()) as { result?: SkillRepositoryImportResult };
+  if (!data.result) {
+    throw new Error("Import skills from GitHub failed");
+  }
+  return data.result;
 }
 
 export async function getAgentRunningConfig(): Promise<AgentRunningConfig> {

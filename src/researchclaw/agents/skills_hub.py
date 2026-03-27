@@ -13,16 +13,19 @@ GitHub token authentication via ``GITHUB_TOKEN`` / ``GH_TOKEN``.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse, unquote
+from urllib.parse import quote, urlencode, urlparse, unquote
 from urllib.request import Request, urlopen
+import zipfile
 
 from .skills_manager import create_skill, enable_skill
 
@@ -52,9 +55,165 @@ class HubInstallResult:
     source_url: str
 
 
+@dataclass
+class SkillRewriteSummary:
+    """Summary of import-time path adaptation for an imported skill."""
+
+    mirrored_files: int = 0
+    path_updates: int = 0
+    model_used: bool = False
+    model_name: str = ""
+    diagnostics: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RepoSkillInstallResult:
+    """Result for one skill imported from a GitHub repository."""
+
+    name: str
+    enabled: bool
+    source_url: str
+    skill_root: str = ""
+    rewrite: SkillRewriteSummary = field(default_factory=SkillRewriteSummary)
+
+
+@dataclass
+class RepoInstallResult:
+    """Aggregate result for a GitHub repository import."""
+
+    repo_url: str
+    source_url: str
+    ref: str
+    count: int
+    imported: list[RepoSkillInstallResult] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+
+
 # ── Retryable HTTP status codes ───────────────────────────────────
 
 RETRYABLE_HTTP_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+_TEXT_EXTENSIONS = {
+    ".md",
+    ".markdown",
+    ".mdx",
+    ".txt",
+    ".rst",
+    ".adoc",
+    ".json",
+    ".jsonl",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".csv",
+    ".tsv",
+    ".py",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".r",
+    ".rb",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".swift",
+    ".ipynb",
+    ".sql",
+    ".xml",
+    ".html",
+    ".css",
+    ".scss",
+}
+_REFERENCE_EXTENSIONS = {
+    ".md",
+    ".markdown",
+    ".mdx",
+    ".txt",
+    ".rst",
+    ".adoc",
+    ".json",
+    ".jsonl",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".csv",
+    ".tsv",
+    ".xml",
+    ".html",
+}
+_SCRIPT_EXTENSIONS = {
+    ".py",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".r",
+    ".rb",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".swift",
+    ".sql",
+}
+_TEXT_FILENAMES = {
+    "SKILL.md",
+    "README.md",
+    "LICENSE",
+    "Makefile",
+    "Dockerfile",
+}
+_REFERENCE_DIR_HINTS = {
+    "docs",
+    "doc",
+    "reference",
+    "references",
+    "prompt",
+    "prompts",
+    "examples",
+    "samples",
+    "templates",
+    "assets",
+    "config",
+    "configs",
+}
+_SCRIPT_DIR_HINTS = {
+    "bin",
+    "tool",
+    "tools",
+    "script",
+    "scripts",
+    "src",
+    "lib",
+    "utils",
+}
 
 
 # ── Environment helpers ───────────────────────────────────────────
@@ -189,6 +348,83 @@ def _http_get(
                         "GitHub API rate limit exceeded. Set GITHUB_TOKEN "
                         "(or GH_TOKEN) to increase the limit, then retry.",
                     ) from e
+            if attempt < attempts and status in RETRYABLE_HTTP_STATUS:
+                delay = _compute_backoff_seconds(attempt)
+                logger.warning(
+                    "Hub HTTP %s on %s (attempt %d/%d), retrying in %.2fs",
+                    status,
+                    full_url,
+                    attempt,
+                    attempts,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            raise
+        except URLError as e:
+            last_error = e
+            if attempt < attempts:
+                delay = _compute_backoff_seconds(attempt)
+                logger.warning(
+                    "Hub URL error on %s (attempt %d/%d), retrying in %.2fs: %s",
+                    full_url,
+                    attempt,
+                    attempts,
+                    delay,
+                    e,
+                )
+                time.sleep(delay)
+                continue
+            raise
+        except TimeoutError as e:
+            last_error = e
+            if attempt < attempts:
+                delay = _compute_backoff_seconds(attempt)
+                logger.warning(
+                    "Hub timeout on %s (attempt %d/%d), retrying in %.2fs",
+                    full_url,
+                    attempt,
+                    attempts,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            raise
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Failed to request hub URL: {full_url}")
+
+
+def _http_bytes_get(
+    url: str,
+    params: dict[str, Any] | None = None,
+    accept: str = "application/octet-stream, */*",
+) -> bytes:
+    """HTTP GET bytes with exponential backoff, zero external dependencies."""
+    full_url = url
+    if params:
+        full_url = f"{url}?{urlencode(params)}"
+    req = Request(
+        full_url,
+        headers={
+            "Accept": accept,
+            "User-Agent": "researchclaw-skills-hub/1.0",
+        },
+    )
+
+    retries = _hub_http_retries()
+    timeout = _hub_http_timeout()
+    attempts = retries + 1
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except HTTPError as e:
+            last_error = e
+            status = getattr(e, "code", 0) or 0
             if attempt < attempts and status in RETRYABLE_HTTP_STATUS:
                 delay = _compute_backoff_seconds(attempt)
                 logger.warning(
@@ -465,7 +701,7 @@ def _normalize_bundle(
 
     references = _sanitize_tree(payload.get("references"))
     scripts = _sanitize_tree(payload.get("scripts"))
-    extra_files: dict[str, Any] = {}
+    extra_files: dict[str, str] = {}
 
     # Fallback: parse from a flat files mapping
     files = payload.get("files")
@@ -485,7 +721,7 @@ def _normalize_bundle(
                 continue
             if parts[0] in ("references", "scripts"):
                 continue
-            _tree_insert(extra_files, parts, file_content)
+            extra_files["/".join(parts)] = file_content
         if not content and isinstance(files.get("SKILL.md"), str):
             content = files["SKILL.md"]
 
@@ -516,6 +752,263 @@ def _safe_fallback_name(raw: str) -> str:
 def _is_http_url(text: str) -> bool:
     parsed = urlparse(text.strip())
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _looks_textual_path(rel_path: str) -> bool:
+    name = Path(rel_path).name
+    if name in _TEXT_FILENAMES:
+        return True
+    return Path(rel_path).suffix.lower() in _TEXT_EXTENSIONS
+
+
+def _classify_import_path(rel_path: str) -> str:
+    suffix = Path(rel_path).suffix.lower()
+    parts = [part.lower() for part in Path(rel_path).parts[:-1]]
+    if suffix in _SCRIPT_EXTENSIONS or any(
+        part in _SCRIPT_DIR_HINTS for part in parts
+    ):
+        return "script"
+    if suffix in _REFERENCE_EXTENSIONS or any(
+        part in _REFERENCE_DIR_HINTS for part in parts
+    ):
+        return "reference"
+    return "reference"
+
+
+def _mirror_import_path(rel_path: str) -> str:
+    bucket = "scripts" if _classify_import_path(rel_path) == "script" else "references"
+    return f"{bucket}/imported/{rel_path.lstrip('/')}"
+
+
+def _insert_tree_content(
+    tree: dict[str, Any],
+    rel_path: str,
+    content: str,
+) -> None:
+    parts = _safe_path_parts(rel_path)
+    if not parts:
+        return
+    _tree_insert(tree, parts, content)
+
+
+def _path_aliases(rel_path: str) -> list[str]:
+    aliases = [rel_path]
+    if not rel_path.startswith("./"):
+        aliases.append(f"./{rel_path}")
+    return aliases
+
+
+def _rewrite_text_paths(
+    content: str,
+    path_map: dict[str, str],
+) -> tuple[str, int]:
+    updated = content
+    updates = 0
+    ordered = sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True)
+    for old, new in ordered:
+        if not old or old == new:
+            continue
+        pattern = re.compile(
+            rf"(^|[^A-Za-z0-9_./-])({re.escape(old)})(?=$|[^A-Za-z0-9_./-])",
+            re.MULTILINE,
+        )
+        updated, count = pattern.subn(lambda m: f"{m.group(1)}{new}", updated)
+        updates += count
+    return updated, updates
+
+
+def _is_model_rewrite_candidate(rel_path: str) -> bool:
+    if rel_path == "SKILL.md":
+        return True
+    return Path(rel_path).suffix.lower() in {
+        ".md",
+        ".markdown",
+        ".mdx",
+        ".txt",
+        ".rst",
+        ".adoc",
+    }
+
+
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    match = re.match(r"^```[A-Za-z0-9_-]*\n(.*)\n```$", stripped, re.DOTALL)
+    if match:
+        return match.group(1)
+    return stripped
+
+
+def _load_active_provider_llm_cfg() -> dict[str, Any]:
+    try:
+        from researchclaw.providers.store import ProviderStore
+
+        provider = ProviderStore().get_active_provider()
+    except Exception:
+        provider = None
+
+    if provider is None:
+        return {}
+
+    data = provider.to_dict() if hasattr(provider, "to_dict") else {}
+    if not isinstance(data, dict):
+        return {}
+
+    return {
+        "provider": data.get("provider_type", ""),
+        "provider_type": data.get("provider_type", ""),
+        "model_name": data.get("model_name", ""),
+        "api_key": data.get("api_key", ""),
+        "api_url": data.get("base_url", ""),
+    }
+
+
+def _rewrite_with_active_model(
+    *,
+    rel_path: str,
+    content: str,
+    path_map: dict[str, str],
+) -> tuple[str, str]:
+    llm_cfg = _load_active_provider_llm_cfg()
+    provider_name = str(llm_cfg.get("provider") or "").strip()
+    model_name = str(llm_cfg.get("model_name") or "").strip()
+    if not provider_name or not model_name:
+        raise RuntimeError("No active provider/model configured for skill rewrite")
+
+    from researchclaw.agents.model_factory import create_model_and_formatter
+
+    model, _ = create_model_and_formatter(llm_cfg)
+    mapping_lines = "\n".join(
+        f"- {old} -> {new}"
+        for old, new in sorted(
+            path_map.items(),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )[:80]
+    )
+    system_prompt = (
+        "You are adapting an imported ResearchClaw skill file. "
+        "Rewrite only file-path references so they match the provided mapping. "
+        "Preserve markdown structure, code fences, bullets, and all non-path text. "
+        "Return only the rewritten file content."
+    )
+    user_prompt = (
+        f"File path: {rel_path}\n"
+        f"Path mapping:\n{mapping_lines}\n\n"
+        f"Current content:\n```text\n{content}\n```"
+    )
+    response = model(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0,
+    )
+    text = getattr(response, "content", None)
+    if not isinstance(text, str) or not text.strip():
+        raise RuntimeError("Model rewrite returned empty content")
+    return _strip_code_fences(text), model_name
+
+
+def _adapt_bundle_for_researchclaw(
+    *,
+    content: str,
+    references: dict[str, Any],
+    scripts: dict[str, Any],
+    extra_files: dict[str, str],
+    rewrite_paths: bool,
+    rewrite_with_model: bool,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, str], SkillRewriteSummary]:
+    summary = SkillRewriteSummary()
+    if not rewrite_paths or not extra_files:
+        return content, references, scripts, extra_files, summary
+
+    references_tree = _sanitize_tree(references)
+    scripts_tree = _sanitize_tree(scripts)
+    original_extra_files = dict(extra_files)
+    mirror_contents: dict[str, str] = {}
+    path_map: dict[str, str] = {}
+
+    for rel_path, file_content in sorted(original_extra_files.items()):
+        if not _looks_textual_path(rel_path):
+            continue
+        mirror_path = _mirror_import_path(rel_path)
+        mirror_contents[mirror_path] = file_content
+        summary.mirrored_files += 1
+        for alias in _path_aliases(rel_path):
+            path_map[alias] = mirror_path
+
+    if not path_map:
+        return content, references_tree, scripts_tree, original_extra_files, summary
+
+    content, updates = _rewrite_text_paths(content, path_map)
+    summary.path_updates += updates
+
+    for rel_path in list(mirror_contents):
+        rewritten, file_updates = _rewrite_text_paths(mirror_contents[rel_path], path_map)
+        mirror_contents[rel_path] = rewritten
+        summary.path_updates += file_updates
+
+    def _rewrite_tree(tree: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+        rewritten_tree: dict[str, Any] = {}
+        for name, value in tree.items():
+            rel = f"{prefix}/{name}" if prefix else name
+            if isinstance(value, dict):
+                rewritten_tree[name] = _rewrite_tree(value, rel)
+                continue
+            if isinstance(value, str):
+                rewritten, count = _rewrite_text_paths(value, path_map)
+                rewritten_tree[name] = rewritten
+                summary.path_updates += count
+            else:
+                rewritten_tree[name] = value
+        return rewritten_tree
+
+    references_tree = _rewrite_tree(references_tree)
+    scripts_tree = _rewrite_tree(scripts_tree)
+
+    if rewrite_with_model:
+        try:
+            content, model_name = _rewrite_with_active_model(
+                rel_path="SKILL.md",
+                content=content,
+                path_map=path_map,
+            )
+            summary.model_used = True
+            summary.model_name = model_name
+        except Exception as exc:
+            summary.diagnostics.append(f"model_rewrite: {exc}")
+
+        for rel_path in list(mirror_contents):
+            if not _is_model_rewrite_candidate(rel_path):
+                continue
+            try:
+                rewritten, model_name = _rewrite_with_active_model(
+                    rel_path=rel_path,
+                    content=mirror_contents[rel_path],
+                    path_map=path_map,
+                )
+                mirror_contents[rel_path] = rewritten
+                if not summary.model_name:
+                    summary.model_name = model_name
+                    summary.model_used = True
+            except Exception as exc:
+                summary.diagnostics.append(f"{rel_path}: {exc}")
+
+    for rel_path, file_content in mirror_contents.items():
+        if rel_path.startswith("references/"):
+            _insert_tree_content(
+                references_tree,
+                rel_path[len("references/") :],
+                file_content,
+            )
+        elif rel_path.startswith("scripts/"):
+            _insert_tree_content(
+                scripts_tree,
+                rel_path[len("scripts/") :],
+                file_content,
+            )
+
+    return content, references_tree, scripts_tree, original_extra_files, summary
 
 
 # ── URL source detection ──────────────────────────────────────────
@@ -637,6 +1130,161 @@ def _github_get_default_branch(owner: str, repo: str) -> str:
         if isinstance(branch, str) and branch.strip():
             return branch.strip()
     return "main"
+
+
+def _github_get_default_branch_via_html(owner: str, repo: str) -> str:
+    repo_url = f"https://github.com/{owner}/{repo}"
+    html = _http_text_get(repo_url)
+    patterns = (
+        r'"defaultBranch":"([^"]+)"',
+        r'"defaultBranchRef"\s*:\s*\{"name":"([^"]+)"',
+        r'data-default-branch="([^"]+)"',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            branch = match.group(1).strip()
+            if branch:
+                return branch
+    return "main"
+
+
+def _github_ref_candidates(
+    owner: str,
+    repo: str,
+    requested_ref: str,
+) -> list[str]:
+    candidates: list[str] = []
+
+    def _add(value: str) -> None:
+        branch = value.strip()
+        if branch and branch not in candidates:
+            candidates.append(branch)
+
+    _add(requested_ref)
+    if not candidates:
+        try:
+            _add(_github_get_default_branch_via_html(owner, repo))
+        except Exception:
+            logger.debug(
+                "Failed to discover GitHub default branch via HTML for %s/%s",
+                owner,
+                repo,
+                exc_info=True,
+            )
+    _add("main")
+    _add("master")
+    return candidates
+
+
+def _github_archive_urls(owner: str, repo: str, ref: str) -> list[str]:
+    encoded = quote(ref, safe="/")
+    return [
+        f"https://github.com/{owner}/{repo}/archive/refs/heads/{encoded}.zip",
+        f"https://github.com/{owner}/{repo}/archive/refs/tags/{encoded}.zip",
+        f"https://github.com/{owner}/{repo}/archive/{encoded}.zip",
+    ]
+
+
+def _github_download_archive(
+    owner: str,
+    repo: str,
+    requested_ref: str,
+) -> tuple[bytes, str]:
+    errors: list[str] = []
+    for ref in _github_ref_candidates(owner, repo, requested_ref):
+        for url in _github_archive_urls(owner, repo, ref):
+            try:
+                return (
+                    _http_bytes_get(
+                        url,
+                        accept="application/zip, application/octet-stream, */*",
+                    ),
+                    ref,
+                )
+            except HTTPError as exc:
+                if getattr(exc, "code", 0) == 404:
+                    continue
+                errors.append(f"{url}: {exc}")
+            except Exception as exc:
+                errors.append(f"{url}: {exc}")
+    raise RuntimeError(
+        "Unable to download GitHub repository archive: " + "; ".join(errors)
+    )
+
+
+def _decode_archive_text(blob: bytes, rel_path: str) -> str:
+    if rel_path.endswith(".ipynb"):
+        return blob.decode("utf-8", errors="replace")
+    try:
+        return blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return blob.decode("utf-8", errors="replace")
+
+
+def _github_archive_text_files(
+    archive_bytes: bytes,
+) -> dict[str, str]:
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+        members = [info for info in zf.infolist() if not info.is_dir()]
+        top_parts = {
+            info.filename.strip("/").split("/", 1)[0]
+            for info in members
+            if info.filename.strip("/")
+        }
+        prefix = next(iter(top_parts)) if len(top_parts) == 1 else ""
+
+        files: dict[str, str] = {}
+        for info in members:
+            raw_name = info.filename.strip("/")
+            if not raw_name:
+                continue
+            rel_path = raw_name
+            if prefix and raw_name.startswith(prefix + "/"):
+                rel_path = raw_name[len(prefix) + 1 :]
+            if not rel_path or not _looks_textual_path(rel_path):
+                continue
+            try:
+                files[rel_path] = _decode_archive_text(zf.read(info), rel_path)
+            except Exception as exc:
+                logger.warning("Failed to decode archive file %s: %s", rel_path, exc)
+        return files
+
+
+def _github_archive_skill_md_roots(files: dict[str, str]) -> list[str]:
+    roots: list[str] = []
+    for path in sorted(files):
+        if path == "SKILL.md":
+            roots.append("")
+        elif path.endswith("/SKILL.md"):
+            roots.append(path[: -len("/SKILL.md")])
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        ordered.append(root)
+    return ordered
+
+
+def _github_archive_collect_skill_files(
+    files: dict[str, str],
+    root: str,
+) -> dict[str, str]:
+    if not root:
+        return dict(files)
+    prefix = root.rstrip("/") + "/"
+    collected: dict[str, str] = {}
+    skill_md_path = prefix + "SKILL.md"
+    if skill_md_path in files:
+        collected["SKILL.md"] = files[skill_md_path]
+    for path, content in files.items():
+        if path == skill_md_path:
+            continue
+        if path.startswith(prefix):
+            collected[path[len(prefix) :]] = content
+    return collected
 
 
 def _normalize_skill_key(text: str) -> str:
@@ -773,6 +1421,48 @@ def _github_collect_tree_files(
     return files
 
 
+def _github_collect_all_files(
+    owner: str,
+    repo: str,
+    ref: str,
+    root: str,
+    max_files: int = 300,
+) -> dict[str, str]:
+    """Recursively collect textual files under a skill root."""
+    files: dict[str, str] = {}
+    pending = [root]
+    visited = 0
+    while pending:
+        current_dir = pending.pop()
+        entries = _github_get_dir_entries(owner, repo, current_dir, ref)
+        for entry in entries:
+            entry_type = str(entry.get("type") or "")
+            entry_path = str(entry.get("path") or "")
+            if not entry_path:
+                continue
+            if entry_type == "dir":
+                pending.append(entry_path)
+                continue
+            if entry_type != "file":
+                continue
+            rel = _relative_from_root(entry_path, root)
+            if not _looks_textual_path(rel):
+                continue
+            try:
+                files[rel] = _github_read_file(entry)
+            except Exception as exc:
+                logger.warning("Failed to fetch GitHub file %s: %s", entry_path, exc)
+                continue
+            visited += 1
+            if visited >= max_files:
+                logger.warning(
+                    "GitHub skill file collection capped at %d files",
+                    max_files,
+                )
+                return files
+    return files
+
+
 # ── Source-specific fetchers ───────────────────────────────────────
 
 
@@ -784,92 +1474,24 @@ def _fetch_bundle_from_skills_sh_url(
     if spec is None:
         raise ValueError("Invalid skills.sh URL format")
     owner, repo, skill = spec
-    branch_candidates = (
-        [requested_version.strip()]
-        if requested_version.strip()
-        else ["main", "master"]
+    archive_bytes, branch = _github_download_archive(owner, repo, requested_version)
+    archive_files = _github_archive_text_files(archive_bytes)
+    roots = _github_archive_skill_md_roots(archive_files)
+    selected_candidates = _filter_skill_roots_by_hint(
+        roots,
+        _join_repo_path("skills", skill),
     )
-
-    selected_root = ""
-    skill_md_entry: dict[str, Any] | None = None
-    branch = branch_candidates[0]
-    for candidate_branch in branch_candidates:
-        branch = candidate_branch
-        roots = [_join_repo_path("skills", skill), skill, ""]
-        for root in roots:
-            skill_md_path = _join_repo_path(root, "SKILL.md")
-            try:
-                entry = _github_get_content_entry(
-                    owner,
-                    repo,
-                    skill_md_path,
-                    branch,
-                )
-            except HTTPError as e:
-                if getattr(e, "code", 0) == 404:
-                    continue
-                raise
-            if str(entry.get("type") or "") == "file":
-                selected_root = root
-                skill_md_entry = entry
-                break
-        if skill_md_entry is not None:
-            break
-
-    if skill_md_entry is None:
-        # Fuzzy match via repo tree
-        skill_norm = _normalize_skill_key(skill)
-        for candidate_branch in branch_candidates:
-            branch = candidate_branch
-            for root in _github_list_skill_md_roots(owner, repo, branch):
-                leaf = root.split("/")[-1] if root else root
-                leaf_norm = _normalize_skill_key(leaf)
-                if not leaf_norm:
-                    continue
-                if (
-                    leaf_norm == skill_norm
-                    or leaf_norm in skill_norm
-                    or skill_norm in leaf_norm
-                    or skill_norm.endswith(f"-{leaf_norm}")
-                ):
-                    selected_root = root
-                    skill_md_path = _join_repo_path(root, "SKILL.md")
-                    try:
-                        entry = _github_get_content_entry(
-                            owner,
-                            repo,
-                            skill_md_path,
-                            branch,
-                        )
-                    except HTTPError:
-                        continue
-                    if str(entry.get("type") or "") == "file":
-                        skill_md_entry = entry
-                        break
-            if skill_md_entry is not None:
-                break
-
-    if skill_md_entry is None:
+    if selected_candidates == roots:
+        selected_candidates = _filter_skill_roots_by_hint(roots, skill)
+    if not selected_candidates:
         raise ValueError(
             "Could not find SKILL.md from skills.sh source. "
             "This skill may not expose SKILL.md in the repository.",
         )
-
-    files: dict[str, str] = {"SKILL.md": _github_read_file(skill_md_entry)}
-    for subdir in ("references", "scripts"):
-        try:
-            files.update(
-                _github_collect_tree_files(
-                    owner=owner,
-                    repo=repo,
-                    ref=branch,
-                    root=selected_root,
-                    subdir=subdir,
-                ),
-            )
-        except HTTPError as e:
-            if getattr(e, "code", 0) != 404:
-                raise
+    selected_root = selected_candidates[0]
+    files = _github_archive_collect_skill_files(archive_files, selected_root)
+    if "SKILL.md" not in files:
+        raise ValueError("Could not find SKILL.md from skills.sh source archive")
 
     source_url = f"https://github.com/{owner}/{repo}"
     return {"name": skill, "files": files}, source_url
@@ -882,90 +1504,19 @@ def _fetch_bundle_from_repo_and_skill_hint(
     skill_hint: str,
     requested_version: str,
 ) -> tuple[Any, str]:
-    branch_candidates = (
-        [requested_version.strip()]
-        if requested_version.strip()
-        else ["main", "master"]
-    )
     skill = skill_hint.strip()
-
-    selected_root = ""
-    skill_md_entry: dict[str, Any] | None = None
-    branch = branch_candidates[0]
-    for candidate_branch in branch_candidates:
-        branch = candidate_branch
-        roots = [_join_repo_path("skills", skill) if skill else "", skill, ""]
-        roots = [r for r in roots if r or r == ""]
-        for root in roots:
-            skill_md_path = _join_repo_path(root, "SKILL.md")
-            try:
-                entry = _github_get_content_entry(
-                    owner,
-                    repo,
-                    skill_md_path,
-                    branch,
-                )
-            except HTTPError as e:
-                if getattr(e, "code", 0) == 404:
-                    continue
-                raise
-            if str(entry.get("type") or "") == "file":
-                selected_root = root
-                skill_md_entry = entry
-                break
-        if skill_md_entry is not None:
-            break
-
-    if skill_md_entry is None:
-        skill_norm = _normalize_skill_key(skill)
-        for candidate_branch in branch_candidates:
-            branch = candidate_branch
-            for root in _github_list_skill_md_roots(owner, repo, branch):
-                leaf = root.split("/")[-1] if root else root
-                leaf_norm = _normalize_skill_key(leaf)
-                if not leaf_norm:
-                    continue
-                if not skill_norm or (
-                    leaf_norm == skill_norm
-                    or leaf_norm in skill_norm
-                    or skill_norm in leaf_norm
-                    or skill_norm.endswith(f"-{leaf_norm}")
-                ):
-                    selected_root = root
-                    skill_md_path = _join_repo_path(root, "SKILL.md")
-                    try:
-                        entry = _github_get_content_entry(
-                            owner,
-                            repo,
-                            skill_md_path,
-                            branch,
-                        )
-                    except HTTPError:
-                        continue
-                    if str(entry.get("type") or "") == "file":
-                        skill_md_entry = entry
-                        break
-            if skill_md_entry is not None:
-                break
-
-    if skill_md_entry is None:
+    archive_bytes, branch = _github_download_archive(owner, repo, requested_version)
+    archive_files = _github_archive_text_files(archive_bytes)
+    roots = _github_archive_skill_md_roots(archive_files)
+    selected_candidates = (
+        _filter_skill_roots_by_hint(roots, skill) if skill else roots
+    )
+    if not selected_candidates:
         raise ValueError("Could not find SKILL.md in source repository")
-
-    files: dict[str, str] = {"SKILL.md": _github_read_file(skill_md_entry)}
-    for subdir in ("references", "scripts"):
-        try:
-            files.update(
-                _github_collect_tree_files(
-                    owner=owner,
-                    repo=repo,
-                    ref=branch,
-                    root=selected_root,
-                    subdir=subdir,
-                ),
-            )
-        except HTTPError as e:
-            if getattr(e, "code", 0) != 404:
-                raise
+    selected_root = selected_candidates[0]
+    files = _github_archive_collect_skill_files(archive_files, selected_root)
+    if "SKILL.md" not in files:
+        raise ValueError("Could not find SKILL.md in source repository archive")
     source_url = f"https://github.com/{owner}/{repo}"
     skill_name = skill.split("/")[-1].strip() if skill else repo
     return {"name": skill_name or repo, "files": files}, source_url
@@ -1012,10 +1563,12 @@ def _fetch_bundle_from_skillsmp_url(
 def _fetch_bundle_from_hub_slug(
     slug: str,
     version: str,
+    *,
+    base_url: str | None = None,
 ) -> tuple[Any, str]:
     if not slug:
         raise ValueError("slug is required for hub install")
-    base = _hub_base_url()
+    base = (base_url or "").strip() or _hub_base_url()
     candidates = [_join_url(base, _hub_detail_path().format(slug=slug))]
     errors: list[str] = []
     data: Any = None
@@ -1040,9 +1593,14 @@ def _fetch_bundle_from_hub_slug(
 # ── Public API ─────────────────────────────────────────────────────
 
 
-def search_hub_skills(query: str, limit: int = 20) -> list[HubSkillResult]:
+def search_hub_skills(
+    query: str,
+    limit: int = 20,
+    *,
+    base_url: str | None = None,
+) -> list[HubSkillResult]:
     """Search the ResearchClaw Skills Hub."""
-    base = _hub_base_url()
+    base = (base_url or "").strip() or _hub_base_url()
     search_url = _join_url(base, _hub_search_path())
     data = _http_json_get(search_url, {"q": query, "limit": limit})
     items = _norm_search_items(data)
@@ -1071,6 +1629,8 @@ def install_skill_from_hub(
     version: str = "",
     enable: bool = True,
     overwrite: bool = False,
+    rewrite_paths: bool = True,
+    rewrite_with_model: bool = True,
 ) -> HubInstallResult:
     """Install a skill from any supported source URL.
 
@@ -1114,6 +1674,20 @@ def install_skill_from_hub(
                     data = _http_json_get(bundle_url)
 
     name, content, references, scripts, extra_files = _normalize_bundle(data)
+    (
+        content,
+        references,
+        scripts,
+        extra_files,
+        _rewrite_summary,
+    ) = _adapt_bundle_for_researchclaw(
+        content=content,
+        references=references,
+        scripts=scripts,
+        extra_files=extra_files,
+        rewrite_paths=rewrite_paths,
+        rewrite_with_model=rewrite_with_model,
+    )
     if not name:
         fallback = urlparse(bundle_url).path.strip("/").split("/")[-1]
         name = _safe_fallback_name(fallback)
@@ -1141,11 +1715,140 @@ def install_skill_from_hub(
     return HubInstallResult(name=name, enabled=enabled, source_url=source_url)
 
 
+def _filter_skill_roots_by_hint(
+    roots: list[str],
+    path_hint: str,
+) -> list[str]:
+    hint = path_hint.strip("/")
+    if not hint:
+        return roots
+
+    matches = [
+        root
+        for root in roots
+        if root == hint
+        or root.startswith(hint + "/")
+        or hint.startswith(root + "/")
+    ]
+    if matches:
+        return matches
+
+    hint_leaf = hint.split("/")[-1].strip().lower()
+    fuzzy = [
+        root
+        for root in roots
+        if root.split("/")[-1].strip().lower() == hint_leaf
+    ]
+    return fuzzy or roots
+
+
+def install_skill_repository(
+    *,
+    repo_url: str,
+    version: str = "",
+    enable: bool = True,
+    overwrite: bool = False,
+    rewrite_paths: bool = True,
+    rewrite_with_model: bool = True,
+) -> RepoInstallResult:
+    """Import every discoverable skill from a GitHub repository URL."""
+    spec = _extract_github_spec(repo_url)
+    if spec is None:
+        raise ValueError("repo_url must be a valid GitHub repository URL")
+
+    owner, repo, branch_in_url, path_hint = spec
+    requested_ref = version.strip() or branch_in_url.strip()
+    archive_bytes, ref = _github_download_archive(owner, repo, requested_ref)
+    archive_files = _github_archive_text_files(archive_bytes)
+    roots = _github_archive_skill_md_roots(archive_files)
+    roots = _filter_skill_roots_by_hint(roots, path_hint)
+    if not roots:
+        raise ValueError("No SKILL.md files found in the repository")
+
+    imported: list[RepoSkillInstallResult] = []
+    diagnostics: list[str] = []
+    source_root = f"https://github.com/{owner}/{repo}"
+
+    for root in roots:
+        try:
+            files = _github_archive_collect_skill_files(archive_files, root)
+            if "SKILL.md" not in files:
+                raise ValueError("SKILL.md missing from repository archive")
+
+            name, content, references, scripts, extra_files = _normalize_bundle(
+                {
+                    "name": root.split("/")[-1].strip() if root else repo,
+                    "files": files,
+                },
+            )
+            (
+                content,
+                references,
+                scripts,
+                extra_files,
+                rewrite_summary,
+            ) = _adapt_bundle_for_researchclaw(
+                content=content,
+                references=references,
+                scripts=scripts,
+                extra_files=extra_files,
+                rewrite_paths=rewrite_paths,
+                rewrite_with_model=rewrite_with_model,
+            )
+
+            create_skill(
+                name=name,
+                content=content,
+                overwrite=overwrite,
+                references=references,
+                scripts=scripts,
+                extra_files=extra_files,
+            )
+            enabled = False
+            if enable:
+                enabled = enable_skill(name)
+
+            imported.append(
+                RepoSkillInstallResult(
+                    name=name,
+                    enabled=enabled,
+                    source_url=(
+                        source_root
+                        if not root
+                        else f"{source_root}/tree/{ref}/{root}"
+                    ),
+                    skill_root=root,
+                    rewrite=rewrite_summary,
+                ),
+            )
+        except Exception as exc:
+            root_label = root or "."
+            diagnostics.append(f"{root_label}: {exc}")
+
+    if not imported:
+        raise RuntimeError(
+            "No skills were imported from the repository. "
+            + "; ".join(diagnostics)
+        )
+
+    return RepoInstallResult(
+        repo_url=repo_url,
+        source_url=source_root,
+        ref=ref,
+        count=len(imported),
+        imported=imported,
+        diagnostics=diagnostics,
+    )
+
+
 # ── Backward-compatible class interface ────────────────────────────
 
 
 class SkillsHubClient:
     """Class-based interface for the skills hub (backward compatible)."""
+
+    def __init__(self, base_url: str | None = None) -> None:
+        self.base_url = (base_url or "").strip()
 
     def search(
         self,
@@ -1153,7 +1856,12 @@ class SkillsHubClient:
         category: str = "research",
         max_results: int = 20,
     ) -> list[HubSkillResult]:
-        return search_hub_skills(query, limit=max_results)
+        del category
+        return search_hub_skills(
+            query,
+            limit=max_results,
+            base_url=self.base_url or None,
+        )
 
     def install(
         self,
@@ -1161,8 +1869,10 @@ class SkillsHubClient:
         version: str = "latest",
     ) -> Optional[HubInstallResult]:
         try:
-            base = _hub_base_url()
-            url = _join_url(base, f"skills/{slug}")
+            url = slug
+            if not _is_http_url(slug):
+                base = self.base_url or _hub_base_url()
+                url = _join_url(base, f"skills/{slug}")
             return install_skill_from_hub(
                 bundle_url=url,
                 version=version if version != "latest" else "",

@@ -172,14 +172,14 @@ def _create_files_from_tree(
     contents = contents or {}
     for name, subtree in tree.items():
         path = base_dir / name
-        if subtree is None:
+        if subtree is None or isinstance(subtree, str):
             # File
             rel = (
                 str(path.relative_to(base_dir))
                 if base_dir != path.parent
                 else name
             )
-            text = contents.get(rel, "")
+            text = subtree if isinstance(subtree, str) else contents.get(rel, "")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
         else:

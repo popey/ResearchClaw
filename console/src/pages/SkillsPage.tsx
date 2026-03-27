@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Puzzle, RefreshCw } from "lucide-react";
+import { Github, Puzzle, RefreshCw } from "lucide-react";
 import {
+  importSkillsFromGitHubRepo,
   listSkills,
   listActiveSkills,
   enableSkill,
   disableSkill,
 } from "../api";
-import type { SkillItem } from "../types";
+import type { SkillItem, SkillRepositoryImportResult } from "../types";
 import {
   PageHeader,
   EmptyState,
@@ -31,6 +32,14 @@ export default function SkillsPage() {
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [repoRef, setRepoRef] = useState("");
+  const [rewriteWithModel, setRewriteWithModel] = useState(true);
+  const [importingRepo, setImportingRepo] = useState(false);
+  const [lastImport, setLastImport] = useState<SkillRepositoryImportResult | null>(
+    null,
+  );
 
   async function onLoad() {
     const [skillRows, activeRows] = await Promise.all([
@@ -49,8 +58,40 @@ export default function SkillsPage() {
   async function onToggle(skillName: string, isActive: boolean) {
     const action = isActive ? disableSkill : enableSkill;
     await action(skillName);
+    setError("");
     setNotice(`已${isActive ? "禁用" : "启用"}技能 ${skillName}`);
     await onLoad();
+  }
+
+  async function onImportRepo() {
+    const nextRepoUrl = repoUrl.trim();
+    if (!nextRepoUrl) {
+      setError("请先输入 GitHub 仓库地址");
+      return;
+    }
+
+    setImportingRepo(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await importSkillsFromGitHubRepo({
+        repoUrl: nextRepoUrl,
+        ref: repoRef.trim() || undefined,
+        overwrite: true,
+        rewriteWithModel,
+      });
+      setLastImport(result);
+      setNotice(
+        `已导入 ${result.count} 个技能：${result.imported
+          .map((item) => item.name)
+          .join("、")}`,
+      );
+      await onLoad();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导入 GitHub 技能失败");
+    } finally {
+      setImportingRepo(false);
+    }
   }
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -96,6 +137,7 @@ export default function SkillsPage() {
       />
 
       {notice && <NoticeBanner variant="success">{notice}</NoticeBanner>}
+      {error && <NoticeBanner variant="danger">{error}</NoticeBanner>}
 
       {!loaded && skills.length === 0 && (
         <EmptyState
@@ -110,6 +152,95 @@ export default function SkillsPage() {
           }
         />
       )}
+
+      <SurfaceCard
+        title="从 GitHub 仓库导入技能"
+        description="支持直接粘贴 GitHub 仓库或 tree/blob 子路径。后端会扫描仓库里的 `SKILL.md`，导入到本地技能目录，并把外部路径尽量改写成 ResearchClaw 可读的 `references/` 或 `scripts/`。"
+        actions={
+          <button onClick={onImportRepo} disabled={importingRepo}>
+            <Github size={15} />
+            {importingRepo ? "导入中..." : "导入仓库技能"}
+          </button>
+        }
+      >
+        <div className="form-stack">
+          <input
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder="https://github.com/Research-Equality/RE-literature-discovery"
+          />
+          <div className="toolbar-row">
+            <input
+              value={repoRef}
+              onChange={(e) => setRepoRef(e.target.value)}
+              placeholder="可选：分支 / tag / commit"
+            />
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                color: "var(--text-secondary)",
+                fontSize: 13,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={rewriteWithModel}
+                onChange={(e) => setRewriteWithModel(e.target.checked)}
+              />
+              用当前已配置模型辅助修正路径引用
+            </label>
+          </div>
+          {lastImport && (
+            <div className="card-list">
+              {lastImport.imported.map((item) => {
+                const rewrite = item.rewrite;
+                return (
+                  <div key={`${item.name}-${item.skill_root || "root"}`} className="data-row compact">
+                    <div className="data-row-info">
+                      <div className="data-row-title">
+                        {item.name}
+                        <Badge variant={item.enabled ? "success" : "neutral"}>
+                          {item.enabled ? "已启用" : "已导入"}
+                        </Badge>
+                        {rewrite?.model_used && (
+                          <Badge variant="info">
+                            模型修复{rewrite.model_name ? ` · ${rewrite.model_name}` : ""}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="data-row-meta">
+                        <code>{item.source_url}</code>
+                      </div>
+                      <div className="data-row-meta">
+                        镜像文件 {rewrite?.mirrored_files ?? 0} · 路径替换 {rewrite?.path_updates ?? 0}
+                      </div>
+                      {Array.isArray(rewrite?.diagnostics) &&
+                        rewrite!.diagnostics!.length > 0 && (
+                          <div className="data-row-meta">
+                            诊断: {rewrite!.diagnostics!.join("；")}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                );
+              })}
+              {Array.isArray(lastImport.diagnostics) &&
+                lastImport.diagnostics.length > 0 && (
+                  <div className="data-row compact">
+                    <div className="data-row-info">
+                      <div className="data-row-title">未导入项</div>
+                      <div className="data-row-meta">
+                        {lastImport.diagnostics.join("；")}
+                      </div>
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
+        </div>
+      </SurfaceCard>
 
       <SurfaceCard
         title="技能开关"

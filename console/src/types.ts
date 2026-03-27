@@ -150,6 +150,31 @@ export type SkillItem = {
   diagnostics?: string[];
 };
 
+export type SkillRewriteSummary = {
+  mirrored_files?: number;
+  path_updates?: number;
+  model_used?: boolean;
+  model_name?: string;
+  diagnostics?: string[];
+};
+
+export type ImportedSkillItem = {
+  name: string;
+  enabled: boolean;
+  source_url: string;
+  skill_root?: string;
+  rewrite?: SkillRewriteSummary;
+};
+
+export type SkillRepositoryImportResult = {
+  repo_url: string;
+  source_url: string;
+  ref: string;
+  count: number;
+  imported: ImportedSkillItem[];
+  diagnostics?: string[];
+};
+
 export type McpClientItem = {
   key: string;
   name?: string;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,8 +22,25 @@ class SkillToggleRequest(BaseModel):
 class SkillInstallRequest(BaseModel):
     """Request to install a skill from hub."""
 
-    skill_id: str
+    skill_id: str = ""
+    bundle_url: str | None = None
     hub_url: str | None = None
+    version: str | None = None
+    enable: bool = True
+    overwrite: bool = False
+    rewrite_paths: bool = True
+    rewrite_with_model: bool = True
+
+
+class SkillRepositoryImportRequest(BaseModel):
+    """Request to import one or more skills from a GitHub repository."""
+
+    repo_url: str
+    ref: str | None = None
+    enable: bool = True
+    overwrite: bool = False
+    rewrite_paths: bool = True
+    rewrite_with_model: bool = True
 
 
 @router.get("")
@@ -82,18 +100,62 @@ async def disable_skill(request: SkillToggleRequest):
 async def install_skill(request: SkillInstallRequest):
     """Install a skill from the skills hub."""
     try:
-        from researchclaw.agents.skills_hub import SkillsHubClient
+        from researchclaw.agents.skills_hub import (
+            SkillsHubClient,
+            install_skill_from_hub,
+        )
+
+        if request.bundle_url:
+            result = install_skill_from_hub(
+                bundle_url=request.bundle_url,
+                version=request.version or "",
+                enable=request.enable,
+                overwrite=request.overwrite,
+                rewrite_paths=request.rewrite_paths,
+                rewrite_with_model=request.rewrite_with_model,
+            )
+            return {
+                "status": "installed",
+                "skill": result.name,
+                "result": asdict(result),
+            }
 
         client = (
             SkillsHubClient(base_url=request.hub_url)
             if request.hub_url
             else SkillsHubClient()
         )
-        result = client.install(request.skill_id)
+        result = client.install(
+            request.skill_id,
+            version=request.version or "latest",
+        )
         return {
             "status": "installed",
-            "skill": request.skill_id,
-            "result": result,
+            "skill": request.skill_id or (result.name if result else ""),
+            "result": asdict(result) if result is not None else None,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/import-repo")
+async def import_skills_from_repo(request: SkillRepositoryImportRequest):
+    """Import all discoverable skills from a GitHub repository."""
+    try:
+        from researchclaw.agents.skills_hub import install_skill_repository
+
+        result = install_skill_repository(
+            repo_url=request.repo_url,
+            version=request.ref or "",
+            enable=request.enable,
+            overwrite=request.overwrite,
+            rewrite_paths=request.rewrite_paths,
+            rewrite_with_model=request.rewrite_with_model,
+        )
+        return {
+            "status": "imported",
+            "repo_url": request.repo_url,
+            "result": asdict(result),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
