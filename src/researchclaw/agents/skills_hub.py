@@ -21,7 +21,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse, unquote
 from urllib.request import Request, urlopen
@@ -30,6 +30,7 @@ import zipfile
 from .skills_manager import create_skill, enable_skill
 
 logger = logging.getLogger(__name__)
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 # ── Data classes ───────────────────────────────────────────────────
@@ -1742,6 +1743,18 @@ def _filter_skill_roots_by_hint(
     return fuzzy or roots
 
 
+def _emit_repo_import_progress(
+    callback: ProgressCallback | None,
+    event: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception:
+        logger.debug("Repo import progress callback failed", exc_info=True)
+
+
 def install_skill_repository(
     *,
     repo_url: str,
@@ -1750,26 +1763,78 @@ def install_skill_repository(
     overwrite: bool = False,
     rewrite_paths: bool = True,
     rewrite_with_model: bool = True,
+    progress_callback: ProgressCallback | None = None,
 ) -> RepoInstallResult:
     """Import every discoverable skill from a GitHub repository URL."""
+    _emit_repo_import_progress(
+        progress_callback,
+        {
+            "type": "start",
+            "message": "解析 GitHub 仓库地址",
+            "repo_url": repo_url,
+            "requested_ref": version.strip(),
+        },
+    )
     spec = _extract_github_spec(repo_url)
     if spec is None:
         raise ValueError("repo_url must be a valid GitHub repository URL")
 
     owner, repo, branch_in_url, path_hint = spec
     requested_ref = version.strip() or branch_in_url.strip()
+    _emit_repo_import_progress(
+        progress_callback,
+        {
+            "type": "stage",
+            "phase": "download",
+            "message": f"下载仓库归档 {owner}/{repo}",
+            "repo_url": repo_url,
+            "requested_ref": requested_ref,
+        },
+    )
     archive_bytes, ref = _github_download_archive(owner, repo, requested_ref)
+    _emit_repo_import_progress(
+        progress_callback,
+        {
+            "type": "stage",
+            "phase": "scan",
+            "message": "扫描仓库中的 SKILL.md",
+            "repo_url": repo_url,
+            "ref": ref,
+        },
+    )
     archive_files = _github_archive_text_files(archive_bytes)
     roots = _github_archive_skill_md_roots(archive_files)
     roots = _filter_skill_roots_by_hint(roots, path_hint)
     if not roots:
         raise ValueError("No SKILL.md files found in the repository")
+    _emit_repo_import_progress(
+        progress_callback,
+        {
+            "type": "discovered",
+            "message": f"发现 {len(roots)} 个 skill",
+            "count": len(roots),
+            "roots": roots,
+            "ref": ref,
+        },
+    )
 
     imported: list[RepoSkillInstallResult] = []
     diagnostics: list[str] = []
     source_root = f"https://github.com/{owner}/{repo}"
 
-    for root in roots:
+    for idx, root in enumerate(roots, start=1):
+        skill_hint = root.split("/")[-1].strip() if root else repo
+        _emit_repo_import_progress(
+            progress_callback,
+            {
+                "type": "skill_start",
+                "message": f"正在导入 {skill_hint}",
+                "index": idx,
+                "total": len(roots),
+                "skill_root": root,
+                "skill_name": skill_hint,
+            },
+        )
         try:
             files = _github_archive_collect_skill_files(archive_files, root)
             if "SKILL.md" not in files:
@@ -1808,22 +1873,54 @@ def install_skill_repository(
             if enable:
                 enabled = enable_skill(name)
 
-            imported.append(
-                RepoSkillInstallResult(
-                    name=name,
-                    enabled=enabled,
-                    source_url=(
-                        source_root
-                        if not root
-                        else f"{source_root}/tree/{ref}/{root}"
-                    ),
-                    skill_root=root,
-                    rewrite=rewrite_summary,
+            imported_skill = RepoSkillInstallResult(
+                name=name,
+                enabled=enabled,
+                source_url=(
+                    source_root
+                    if not root
+                    else f"{source_root}/tree/{ref}/{root}"
                 ),
+                skill_root=root,
+                rewrite=rewrite_summary,
+            )
+            imported.append(imported_skill)
+            _emit_repo_import_progress(
+                progress_callback,
+                {
+                    "type": "skill_done",
+                    "message": f"已导入 {name}",
+                    "index": idx,
+                    "total": len(roots),
+                    "skill": {
+                        "name": imported_skill.name,
+                        "enabled": imported_skill.enabled,
+                        "source_url": imported_skill.source_url,
+                        "skill_root": imported_skill.skill_root,
+                        "rewrite": {
+                            "mirrored_files": imported_skill.rewrite.mirrored_files,
+                            "path_updates": imported_skill.rewrite.path_updates,
+                            "model_used": imported_skill.rewrite.model_used,
+                            "model_name": imported_skill.rewrite.model_name,
+                            "diagnostics": imported_skill.rewrite.diagnostics,
+                        },
+                    },
+                },
             )
         except Exception as exc:
             root_label = root or "."
             diagnostics.append(f"{root_label}: {exc}")
+            _emit_repo_import_progress(
+                progress_callback,
+                {
+                    "type": "warning",
+                    "message": f"{root_label}: {exc}",
+                    "index": idx,
+                    "total": len(roots),
+                    "skill_root": root,
+                    "skill_name": skill_hint,
+                },
+            )
 
     if not imported:
         raise RuntimeError(

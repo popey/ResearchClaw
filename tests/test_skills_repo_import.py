@@ -113,3 +113,92 @@ def test_skills_router_import_repo_endpoint(monkeypatch) -> None:
     assert payload["status"] == "imported"
     assert payload["result"]["count"] == 1
     assert payload["result"]["imported"][0]["name"] == "demo-skill"
+
+
+def test_skills_router_import_repo_stream_endpoint(monkeypatch) -> None:
+    app = FastAPI()
+    app.include_router(skills_router.router, prefix="/api/skills")
+    client = TestClient(app)
+
+    def _fake_install_skill_repository(**kwargs):
+        progress_callback = kwargs.get("progress_callback")
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "type": "start",
+                    "message": "解析 GitHub 仓库地址",
+                },
+            )
+            progress_callback(
+                {
+                    "type": "discovered",
+                    "message": "发现 1 个 skill",
+                    "count": 1,
+                    "roots": ["skills/demo-skill"],
+                },
+            )
+            progress_callback(
+                {
+                    "type": "skill_done",
+                    "message": "已导入 demo-skill",
+                    "index": 1,
+                    "total": 1,
+                    "skill": {
+                        "name": "demo-skill",
+                        "enabled": True,
+                        "source_url": "https://github.com/acme/demo-repo/tree/main/skills/demo-skill",
+                        "skill_root": "skills/demo-skill",
+                        "rewrite": {
+                            "mirrored_files": 2,
+                            "path_updates": 4,
+                            "model_used": False,
+                            "model_name": "",
+                            "diagnostics": [],
+                        },
+                    },
+                },
+            )
+        return skills_hub.RepoInstallResult(
+            repo_url="https://github.com/acme/demo-repo",
+            source_url="https://github.com/acme/demo-repo",
+            ref="main",
+            count=1,
+            imported=[
+                skills_hub.RepoSkillInstallResult(
+                    name="demo-skill",
+                    enabled=True,
+                    source_url="https://github.com/acme/demo-repo/tree/main/skills/demo-skill",
+                    skill_root="skills/demo-skill",
+                    rewrite=skills_hub.SkillRewriteSummary(
+                        mirrored_files=2,
+                        path_updates=4,
+                    ),
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(
+        skills_hub,
+        "install_skill_repository",
+        _fake_install_skill_repository,
+    )
+
+    with client.stream(
+        "POST",
+        "/api/skills/import-repo/stream",
+        json={
+            "repo_url": "https://github.com/acme/demo-repo",
+            "ref": "main",
+            "overwrite": True,
+            "rewrite_with_model": False,
+        },
+    ) as response:
+        body = "".join(
+            line.decode("utf-8") if isinstance(line, bytes) else line
+            for line in response.iter_lines()
+        )
+
+    assert response.status_code == 200
+    assert '"type": "start"' in body
+    assert '"type": "skill_done"' in body
+    assert '"type": "done"' in body

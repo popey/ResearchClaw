@@ -41,6 +41,7 @@ _USER_SKILL_DIRS: tuple[tuple[Path, str], ...] = (
     (Path.home() / ".agents" / "skills", "user-standard"),
     (Path.home() / ".researchclaw" / "skills", "user-native"),
 )
+_HIDDEN_SKILLS_FILENAME = ".researchclaw-hidden-skills.json"
 
 
 # ── Models ─────────────────────────────────────────────────────────
@@ -223,6 +224,55 @@ def _safe_path_parts(rel_path: str) -> Optional[List[str]]:
         if p in (".", "..", "") or "/" in p or "\\" in p:
             return None
     return parts
+
+
+def _hidden_skills_file() -> Path:
+    return Path(CUSTOMIZED_SKILLS_DIR).parent / _HIDDEN_SKILLS_FILENAME
+
+
+def _load_hidden_skill_ids() -> set[str]:
+    path = _hidden_skills_file()
+    if not path.is_file():
+        return set()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.debug("Failed to read hidden skill ids from %s", path, exc_info=True)
+        return set()
+    if not isinstance(raw, list):
+        return set()
+    return {
+        str(item).strip()
+        for item in raw
+        if isinstance(item, str) and str(item).strip()
+    }
+
+
+def _save_hidden_skill_ids(skill_ids: set[str]) -> None:
+    path = _hidden_skills_file()
+    if not skill_ids:
+        if path.exists():
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(sorted(skill_ids), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _hide_skill_id(skill_id: str) -> None:
+    next_hidden = _load_hidden_skill_ids()
+    next_hidden.add(skill_id)
+    _save_hidden_skill_ids(next_hidden)
+
+
+def _unhide_skill_id(skill_id: str) -> None:
+    next_hidden = _load_hidden_skill_ids()
+    if skill_id not in next_hidden:
+        return
+    next_hidden.discard(skill_id)
+    _save_hidden_skill_ids(next_hidden)
 
 
 def _iter_project_roots(start: Optional[Path] = None) -> List[Path]:
@@ -450,10 +500,13 @@ def _is_disclosable_skill(info: SkillInfo) -> bool:
 def list_available_skills() -> List[SkillInfo]:
     """List all available skills (builtin + customised + active status)."""
     skills: Dict[str, SkillInfo] = {}
+    hidden_skill_ids = _load_hidden_skill_ids()
     discovered = _discover_skill_sources()
     for skill_dir, source, scope in discovered.values():
         info = _read_skill_info(skill_dir, source=source, scope=scope)
         if not _is_disclosable_skill(info):
+            continue
+        if info.id in hidden_skill_ids:
             continue
         skills[info.id] = info
 
@@ -505,9 +558,12 @@ def sync_skills_to_working_dir(
     active_dir.mkdir(parents=True, exist_ok=True)
 
     synced = 0
+    hidden_skill_ids = _load_hidden_skill_ids()
 
     sources = _discover_skill_sources(skill_names=skill_names)
     for name, (src, source, scope) in sources.items():
+        if name in hidden_skill_ids:
+            continue
         info = _read_skill_info(src, source=source, scope=scope)
         if not _is_disclosable_skill(info):
             continue
@@ -611,6 +667,7 @@ def create_skill(
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
+    _unhide_skill_id(name)
 
     # Write SKILL.md
     (dest / "SKILL.md").write_text(content, encoding="utf-8")
@@ -716,6 +773,7 @@ def enable_skill(name: str) -> bool:
     if resolved is None:
         return False
     skill_id, source_dir, source_name, scope = resolved
+    _unhide_skill_id(skill_id)
     info = _read_skill_info(source_dir, source=source_name, scope=scope)
     if not _is_disclosable_skill(info):
         return False
@@ -797,28 +855,60 @@ def delete_skill(name: str) -> bool:
 
     Does NOT delete builtin skills. Also removes from active if present.
     """
+    result = delete_skill_result(name)
+    return bool(result.get("ok", False))
+
+
+def delete_skill_result(name: str) -> Dict[str, Any]:
+    """Delete or hide a skill depending on where it comes from.
+
+    - customized skills: remove both customized + active copies
+    - builtin / project / user skills: hide from catalog and remove active copy
+    """
+    resolved_auto = _resolve_skill_dir_by_name(name, source="auto")
     resolved_custom = _resolve_skill_dir_by_name(name, source="customized")
     resolved_active = _resolve_skill_dir_by_name(name, source="active")
+    skill_id = (
+        resolved_auto[0]
+        if resolved_auto is not None
+        else (
+            resolved_custom[0]
+            if resolved_custom is not None
+            else (resolved_active[0] if resolved_active is not None else name)
+        )
+    )
+    source_name = resolved_auto[2] if resolved_auto is not None else ""
     custom = (
         Path(CUSTOMIZED_SKILLS_DIR) / resolved_custom[0]
         if resolved_custom is not None
-        else Path(CUSTOMIZED_SKILLS_DIR) / name
+        else Path(CUSTOMIZED_SKILLS_DIR) / skill_id
     )
     active = (
         Path(ACTIVE_SKILLS_DIR) / resolved_active[0]
         if resolved_active is not None
-        else Path(ACTIVE_SKILLS_DIR) / name
+        else Path(ACTIVE_SKILLS_DIR) / skill_id
     )
 
     deleted = False
+    action = "hidden"
     if custom.exists():
         shutil.rmtree(custom)
+        deleted = True
+        action = "deleted"
+        _unhide_skill_id(skill_id)
+    elif resolved_auto is not None:
+        _hide_skill_id(skill_id)
         deleted = True
     if active.exists():
         shutil.rmtree(active)
         deleted = True
 
-    return deleted
+    return {
+        "ok": deleted,
+        "skill": skill_id,
+        "action": action,
+        "source": source_name,
+    }
 
 
 class SkillsManager:
@@ -843,6 +933,9 @@ class SkillsManager:
 
     def delete_skill(self, name: str) -> bool:
         return delete_skill(name)
+
+    def delete_skill_result(self, name: str) -> Dict[str, Any]:
+        return delete_skill_result(name)
 
     def create_skill(
         self,

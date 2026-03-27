@@ -113,6 +113,15 @@ class ChannelInstallRequest(BaseModel):
     overwrite: bool = False
 
 
+class SessionDeleteTarget(BaseModel):
+    session_id: str
+    agent_id: str | None = None
+
+
+class SessionBatchDeleteRequest(BaseModel):
+    sessions: list[SessionDeleteTarget] = Field(default_factory=list)
+
+
 def _load_mutable_config() -> dict[str, Any]:
     cfg = load_config()
     return cfg if isinstance(cfg, dict) else {}
@@ -146,6 +155,62 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = value
     return out
+
+
+def _resolve_agent_id(agent_id: str | None) -> str:
+    return (agent_id or "main").strip() or "main"
+
+
+def _get_session_record(
+    runner: Any,
+    *,
+    session_id: str,
+    agent_id: str,
+) -> Any:
+    if hasattr(runner, "get_session"):
+        return runner.get_session(agent_id=agent_id, session_id=session_id)
+    if hasattr(runner, "session_manager"):
+        return runner.session_manager.get_session(session_id)
+    return None
+
+
+def _delete_session_with_runner(
+    runner: Any,
+    *,
+    session_id: str,
+    agent_id: str,
+) -> dict[str, Any]:
+    session = _get_session_record(
+        runner,
+        session_id=session_id,
+        agent_id=agent_id,
+    )
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found in agent '{agent_id}'",
+        )
+
+    if hasattr(runner, "delete_session"):
+        runner.delete_session(agent_id=agent_id, session_id=session_id)
+    else:
+        runner.session_manager.delete_session(session_id)
+
+    memory_deleted = 0
+    if hasattr(runner, "runner") and runner.runner.agent is not None:
+        agent = runner.runner.agent
+        if hasattr(agent, "memory") and hasattr(
+            agent.memory,
+            "delete_session_messages",
+        ):
+            memory_deleted = agent.memory.delete_session_messages(session_id)
+
+    return {
+        "deleted": True,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "memory_messages_deleted": memory_deleted,
+    }
 
 
 async def _refresh_runtime(req: Request) -> None:
@@ -629,13 +694,8 @@ async def get_session(
             detail="Session manager not available",
         )
 
-    aid = (agent_id or "main").strip() or "main"
-    if hasattr(runner, "get_session"):
-        session = runner.get_session(agent_id=aid, session_id=session_id)
-    elif hasattr(runner, "session_manager"):
-        session = runner.session_manager.get_session(session_id)
-    else:
-        session = None
+    aid = _resolve_agent_id(agent_id)
+    session = _get_session_record(runner, session_id=session_id, agent_id=aid)
     if not session:
         raise HTTPException(
             status_code=404,
@@ -659,39 +719,62 @@ async def delete_session(
             detail="Session manager not available",
         )
 
-    aid = (agent_id or "main").strip() or "main"
-    if hasattr(runner, "get_session"):
-        session = runner.get_session(agent_id=aid, session_id=session_id)
-    elif hasattr(runner, "session_manager"):
-        session = runner.session_manager.get_session(session_id)
-    else:
-        session = None
-    if not session:
+    aid = _resolve_agent_id(agent_id)
+    return _delete_session_with_runner(
+        runner,
+        session_id=session_id,
+        agent_id=aid,
+    )
+
+
+@router.post("/sessions/batch-delete")
+async def batch_delete_sessions(
+    request: SessionBatchDeleteRequest,
+    req: Request,
+):
+    runner = getattr(req.app.state, "runner", None)
+    if not runner:
         raise HTTPException(
             status_code=404,
-            detail=f"Session '{session_id}' not found in agent '{aid}'",
+            detail="Session manager not available",
         )
 
-    if hasattr(runner, "delete_session"):
-        runner.delete_session(agent_id=aid, session_id=session_id)
-    else:
-        runner.session_manager.delete_session(session_id)
+    deleted: list[dict[str, Any]] = []
+    not_found: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
 
-    # Also clean up associated memory messages
-    memory_deleted = 0
-    if hasattr(runner, "runner") and runner.runner.agent is not None:
-        agent = runner.runner.agent
-        if hasattr(agent, "memory") and hasattr(
-            agent.memory,
-            "delete_session_messages",
-        ):
-            memory_deleted = agent.memory.delete_session_messages(session_id)
+    for item in request.sessions:
+        session_id = str(item.session_id or "").strip()
+        if not session_id:
+            continue
+        aid = _resolve_agent_id(item.agent_id)
+        key = (aid, session_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            deleted.append(
+                _delete_session_with_runner(
+                    runner,
+                    session_id=session_id,
+                    agent_id=aid,
+                ),
+            )
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            not_found.append(
+                {
+                    "session_id": session_id,
+                    "agent_id": aid,
+                    "detail": exc.detail,
+                },
+            )
 
     return {
-        "deleted": True,
-        "session_id": session_id,
-        "agent_id": aid,
-        "memory_messages_deleted": memory_deleted,
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "not_found": not_found,
     }
 
 

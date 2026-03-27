@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from researchclaw.constant import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 
 class ChatRequest(BaseModel):
@@ -145,23 +147,66 @@ async def chat_stream(request: ChatRequest, req: Request):
     runner = getattr(req.app.state, "runner", None)
     session_id = request.session_id or str(uuid.uuid4())
 
+    def _sse(payload: dict[str, Any]) -> str:
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
     async def generate():
         if not runner:
-            yield f"data: {json.dumps({'type': 'error', 'content': 'Agent not running'})}\n\n"
+            yield _sse({"type": "error", "content": "Agent not running"})
             return
 
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def forward_events() -> None:
+            try:
+                async for event in runner.chat_stream(
+                    message=request.message,
+                    session_id=session_id,
+                    agent_id=request.agent_id,
+                ):
+                    await queue.put(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                await queue.put(
+                    {
+                        "type": "error",
+                        "content": str(e),
+                        "session_id": session_id,
+                    },
+                )
+            finally:
+                await queue.put(None)
+
+        producer = asyncio.create_task(forward_events())
         try:
-            async for event in runner.chat_stream(
-                message=request.message,
-                session_id=session_id,
-                agent_id=request.agent_id,
-            ):
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=STREAM_HEARTBEAT_INTERVAL_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    heartbeat = {
+                        "type": "heartbeat",
+                        "session_id": session_id,
+                    }
+                    if request.agent_id:
+                        heartbeat["agent_id"] = request.agent_id
+                    yield _sse(heartbeat)
+                    continue
+
+                if event is None:
+                    break
+
                 event["session_id"] = session_id
                 if request.agent_id:
                     event["agent_id"] = request.agent_id
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e), 'session_id': session_id})}\n\n"
+                yield _sse(event)
+        finally:
+            producer.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer
 
     return StreamingResponse(
         generate(),

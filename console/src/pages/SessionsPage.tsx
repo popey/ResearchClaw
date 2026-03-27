@@ -10,13 +10,14 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
+  batchDeleteSessions,
   deleteSession,
   getAgents,
   getSessionDetail,
   getSessionsByAgent,
 } from "../api";
 import { useI18n } from "../i18n";
-import type { SessionItem } from "../types";
+import type { SessionDeleteTarget, SessionItem } from "../types";
 import {
   Badge,
   DetailModal,
@@ -42,6 +43,23 @@ function resolveSessionAgentId(
   return activeAgent || session.agent_id || undefined;
 }
 
+function getSessionSelectionKey(
+  session: SessionItem,
+  activeAgent: string,
+): string {
+  return `${resolveSessionAgentId(session, activeAgent) || "main"}:${session.session_id}`;
+}
+
+function getSessionDeleteTarget(
+  session: SessionItem,
+  activeAgent: string,
+): SessionDeleteTarget {
+  return {
+    session_id: session.session_id,
+    agent_id: resolveSessionAgentId(session, activeAgent) || "main",
+  };
+}
+
 export default function SessionsPage() {
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -49,8 +67,13 @@ export default function SessionsPage() {
   const [agents, setAgents] = useState<any[]>([]);
   const [activeAgent, setActiveAgent] = useState<string>("all");
   const [selected, setSelected] = useState<any>(null);
+  const [selectedSessionKeys, setSelectedSessionKeys] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [busySessionKey, setBusySessionKey] = useState("");
+  const [batchDeleting, setBatchDeleting] = useState(false);
 
   const queryText = query.trim().toLowerCase();
   const filteredSessions = useMemo(
@@ -68,6 +91,35 @@ export default function SessionsPage() {
     [queryText, sessions],
   );
 
+  const selectedSessions = useMemo(
+    () =>
+      sessions.filter((session) =>
+        selectedSessionKeys.includes(
+          getSessionSelectionKey(session, activeAgent),
+        ),
+      ),
+    [activeAgent, selectedSessionKeys, sessions],
+  );
+
+  const visibleSelectionKeys = useMemo(
+    () =>
+      filteredSessions.map((session) =>
+        getSessionSelectionKey(session, activeAgent),
+      ),
+    [activeAgent, filteredSessions],
+  );
+
+  const selectedVisibleCount = useMemo(
+    () =>
+      visibleSelectionKeys.filter((key) => selectedSessionKeys.includes(key))
+        .length,
+    [selectedSessionKeys, visibleSelectionKeys],
+  );
+
+  const allVisibleSelected =
+    visibleSelectionKeys.length > 0 &&
+    selectedVisibleCount === visibleSelectionKeys.length;
+
   async function onLoad() {
     const [sessionRows, agentRows] = await Promise.all([
       getSessionsByAgent(activeAgent === "all" ? undefined : activeAgent),
@@ -82,6 +134,13 @@ export default function SessionsPage() {
     void onLoad();
   }, [activeAgent]);
 
+  useEffect(() => {
+    const validKeys = new Set(
+      sessions.map((session) => getSessionSelectionKey(session, activeAgent)),
+    );
+    setSelectedSessionKeys((prev) => prev.filter((key) => validKeys.has(key)));
+  }, [activeAgent, sessions]);
+
   async function onOpen(session: SessionItem) {
     const targetAgentId = resolveSessionAgentId(session, activeAgent);
     setSelected(
@@ -92,6 +151,7 @@ export default function SessionsPage() {
   async function onDelete(session: SessionItem) {
     const sessionId = session.session_id;
     const targetAgentId = resolveSessionAgentId(session, activeAgent);
+    const sessionKey = getSessionSelectionKey(session, activeAgent);
     if (
       !window.confirm(
         t("确认删除会话 {id} 吗？", { id: sessionId.slice(0, 8) }),
@@ -99,11 +159,90 @@ export default function SessionsPage() {
     ) {
       return;
     }
-    await deleteSession(sessionId, targetAgentId || undefined);
-    if (selected?.session_id === sessionId) {
-      setSelected(null);
+    setBusySessionKey(sessionKey);
+    setError("");
+    setNotice("");
+    try {
+      await deleteSession(sessionId, targetAgentId || undefined);
+      if (selected?.session_id === sessionId) {
+        setSelected(null);
+      }
+      setSelectedSessionKeys((prev) =>
+        prev.filter((key) => key !== sessionKey),
+      );
+      setNotice(`已删除会话 ${sessionId.slice(0, 8)}`);
+      await onLoad();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除会话失败");
+    } finally {
+      setBusySessionKey("");
     }
-    await onLoad();
+  }
+
+  function toggleSessionSelection(session: SessionItem) {
+    const key = getSessionSelectionKey(session, activeAgent);
+    setSelectedSessionKeys((prev) =>
+      prev.includes(key)
+        ? prev.filter((item) => item !== key)
+        : [...prev, key],
+    );
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedSessionKeys((prev) => {
+      if (allVisibleSelected) {
+        return prev.filter((key) => !visibleSelectionKeys.includes(key));
+      }
+      const next = new Set(prev);
+      for (const key of visibleSelectionKeys) {
+        next.add(key);
+      }
+      return Array.from(next);
+    });
+  }
+
+  async function onBatchDelete() {
+    if (selectedSessions.length === 0) return;
+    if (
+      !window.confirm(
+        `确认批量删除 ${selectedSessions.length} 个会话吗？该操作会同时清理关联的记忆消息。`,
+      )
+    ) {
+      return;
+    }
+
+    setBatchDeleting(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await batchDeleteSessions(
+        selectedSessions.map((session) =>
+          getSessionDeleteTarget(session, activeAgent),
+        ),
+      );
+      if (selected) {
+        const selectedKey = getSessionSelectionKey(selected, activeAgent);
+        const deletedKeys = new Set(
+          result.deleted.map(
+            (item) => `${item.agent_id || "main"}:${item.session_id}`,
+          ),
+        );
+        if (deletedKeys.has(selectedKey)) {
+          setSelected(null);
+        }
+      }
+      setSelectedSessionKeys([]);
+      setNotice(
+        result.not_found?.length
+          ? `已删除 ${result.deleted_count} 个会话，${result.not_found.length} 个未找到。`
+          : `已删除 ${result.deleted_count} 个会话。`,
+      );
+      await onLoad();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量删除会话失败");
+    } finally {
+      setBatchDeleting(false);
+    }
   }
 
   function onContinue(session: SessionItem) {
@@ -164,6 +303,9 @@ export default function SessionsPage() {
         }
       />
 
+      {notice && <NoticeBanner variant="success">{notice}</NoticeBanner>}
+      {error && <NoticeBanner variant="danger">{error}</NoticeBanner>}
+
       {!loaded && sessions.length === 0 && (
         <EmptyState
           icon={<MessageCircle size={28} />}
@@ -187,11 +329,46 @@ export default function SessionsPage() {
         </NoticeBanner>
       )}
 
+      {selectedSessionKeys.length > 0 && (
+        <NoticeBanner variant="warning">
+          已选择 {selectedSessionKeys.length} 个会话。可以直接批量删除，或清空选择后继续筛选。
+        </NoticeBanner>
+      )}
+
       <SurfaceCard
         title={t("会话列表")}
         description={t(
           "可以直接查看详情、继续对话，或者按 Agent 范围清理历史会话。",
         )}
+        actions={
+          <div className="toolbar-row">
+            <button
+              type="button"
+              onClick={toggleVisibleSelection}
+              disabled={visibleSelectionKeys.length === 0 || batchDeleting}
+            >
+              {allVisibleSelected ? "取消选择当前结果" : "选择当前结果"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedSessionKeys([])}
+              disabled={selectedSessionKeys.length === 0 || batchDeleting}
+            >
+              清空选择
+            </button>
+            <button
+              className="danger"
+              type="button"
+              onClick={onBatchDelete}
+              disabled={selectedSessions.length === 0 || batchDeleting}
+            >
+              <Trash2 size={14} />
+              {batchDeleting
+                ? "批量删除中..."
+                : `批量删除 (${selectedSessions.length})`}
+            </button>
+          </div>
+        }
       >
         <div className="card-list animate-list">
           {filteredSessions.length === 0 && (
@@ -199,7 +376,11 @@ export default function SessionsPage() {
               {t("当前筛选条件下没有匹配会话")}
             </div>
           )}
-          {filteredSessions.map((session: SessionItem) => (
+          {filteredSessions.map((session: SessionItem) => {
+            const sessionKey = getSessionSelectionKey(session, activeAgent);
+            const isSelected = selectedSessionKeys.includes(sessionKey);
+            const isBusy = batchDeleting || busySessionKey === sessionKey;
+            return (
             <div key={session.session_id} className="data-row">
               <div className="data-row-info">
                 <div className="data-row-title">
@@ -222,6 +403,23 @@ export default function SessionsPage() {
                 </div>
               </div>
               <div className="data-row-actions">
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    color: "var(--text-secondary)",
+                    fontSize: 12,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={isBusy}
+                    onChange={() => toggleSessionSelection(session)}
+                  />
+                  选择
+                </label>
                 <Badge variant="neutral">
                   {(session.agent_id || "main") +
                     ":" +
@@ -229,17 +427,23 @@ export default function SessionsPage() {
                 </Badge>
                 <button
                   className="btn-sm btn-secondary"
+                  disabled={isBusy}
                   onClick={() => onOpen(session)}
                 >
                   <Eye size={14} />
                   查看
                 </button>
-                <button className="btn-sm" onClick={() => onContinue(session)}>
+                <button
+                  className="btn-sm"
+                  disabled={isBusy}
+                  onClick={() => onContinue(session)}
+                >
                   <PlayCircle size={14} />
                   继续对话
                 </button>
                 <button
                   className="btn-sm danger"
+                  disabled={isBusy}
                   onClick={() => onDelete(session)}
                 >
                   <Trash2 size={14} />
@@ -247,7 +451,7 @@ export default function SessionsPage() {
                 </button>
               </div>
             </div>
-          ))}
+          )})}
         </div>
       </SurfaceCard>
 

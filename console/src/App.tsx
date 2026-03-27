@@ -2,7 +2,6 @@ import { useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   MessageSquare,
-  FileText,
   Radio,
   MessageCircle,
   Timer,
@@ -94,12 +93,6 @@ const navSectionConfigs: NavSectionConfig[] = [
         label: "AI 对话",
         icon: MessageSquare,
         tone: "brand",
-      },
-      {
-        to: "/papers",
-        label: "论文检索",
-        icon: FileText,
-        tone: "teal",
       },
     ],
   },

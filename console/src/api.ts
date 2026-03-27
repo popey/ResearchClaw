@@ -45,8 +45,13 @@ import type {
   ResearchWorkflowRemediationBatchResult,
   ResearchWorkflowRemediationContext,
   ResearchWorkflowTaskActionResult,
+  SessionBatchDeleteResult,
+  SessionDeleteTarget,
   SessionItem,
+  SkillBatchDeleteResult,
+  SkillImportProgressEvent,
   SkillItem,
+  SkillDeleteResult,
   SkillRepositoryImportResult,
   StreamEvent,
   WorkspaceFileContent,
@@ -1411,6 +1416,19 @@ export async function deleteSession(
   );
 }
 
+export async function batchDeleteSessions(
+  sessions: SessionDeleteTarget[],
+): Promise<SessionBatchDeleteResult> {
+  return requestJson(
+    "/api/control/sessions/batch-delete",
+    "Batch delete sessions failed",
+    {
+      method: "POST",
+      body: { sessions },
+    },
+  );
+}
+
 export async function getAgents(): Promise<any[]> {
   return requestJson("/api/control/agents", "Agents request failed");
 }
@@ -1609,6 +1627,36 @@ export async function disableSkill(skillName: string): Promise<void> {
   });
 }
 
+export async function deleteSkill(
+  skillName: string,
+): Promise<SkillDeleteResult> {
+  const data = await requestJson<{ result?: SkillDeleteResult }>(
+    "/api/skills/delete",
+    "Delete skill failed",
+    {
+      method: "POST",
+      body: { skill_name: skillName },
+    },
+  );
+  if (!data.result) {
+    throw new Error("Delete skill failed");
+  }
+  return data.result;
+}
+
+export async function batchDeleteSkills(
+  skillNames: string[],
+): Promise<SkillBatchDeleteResult> {
+  return requestJson(
+    "/api/skills/batch-delete",
+    "Batch delete skills failed",
+    {
+      method: "POST",
+      body: { skill_names: skillNames },
+    },
+  );
+}
+
 export async function importSkillsFromGitHubRepo(payload: {
   repoUrl: string;
   ref?: string;
@@ -1646,6 +1694,84 @@ export async function importSkillsFromGitHubRepo(payload: {
     throw new Error("Import skills from GitHub failed");
   }
   return data.result;
+}
+
+export function streamImportSkillsFromGitHubRepo(
+  payload: {
+    repoUrl: string;
+    ref?: string;
+    overwrite?: boolean;
+    rewriteWithModel?: boolean;
+  },
+  onEvent: (event: SkillImportProgressEvent) => void,
+): AbortController {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch("/api/skills/import-repo/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          repo_url: payload.repoUrl,
+          ref: payload.ref,
+          enable: true,
+          overwrite: payload.overwrite ?? true,
+          rewrite_paths: true,
+          rewrite_with_model: payload.rewriteWithModel ?? true,
+        }),
+        signal: controller.signal,
+        cache: "no-store",
+      });
+
+      if (!res.ok || !res.body) {
+        let message = "Import skills stream failed";
+        try {
+          const data = (await res.json()) as { detail?: string };
+          if (data.detail) message = data.detail;
+        } catch {
+          // use fallback message
+        }
+        onEvent({ type: "error", message });
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+          const jsonStr = trimmed.slice(6);
+          if (!jsonStr || jsonStr === "[DONE]") continue;
+          try {
+            onEvent(JSON.parse(jsonStr) as SkillImportProgressEvent);
+          } catch {
+            // ignore malformed stream event
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as any)?.name === "AbortError") return;
+      onEvent({
+        type: "error",
+        message:
+          err instanceof Error ? err.message : "Import skills stream failed",
+      });
+    }
+  })();
+
+  return controller;
 }
 
 export async function getAgentRunningConfig(): Promise<AgentRunningConfig> {
@@ -1744,8 +1870,8 @@ export function streamChat(
   const controller = new AbortController();
 
   (async () => {
-    const STREAM_OPEN_TIMEOUT_MS = 20_000;
-    const STREAM_IDLE_TIMEOUT_MS = 45_000;
+    const STREAM_OPEN_TIMEOUT_MS = 300_000;
+    const STREAM_IDLE_TIMEOUT_MS = 1_800_000;
 
     const toReadableError = (err: unknown): string => {
       const raw =
@@ -1890,6 +2016,9 @@ export function streamChat(
           try {
             const event: StreamEvent = JSON.parse(jsonStr);
             sawAnyStreamEvent = true;
+            if (event.type === "heartbeat") {
+              continue;
+            }
             if (event.type === "done" || event.type === "error") {
               sawTerminalEvent = true;
               clearTimer();

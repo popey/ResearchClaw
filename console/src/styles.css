@@ -1391,6 +1391,52 @@ textarea::placeholder {
   margin-left: 16px;
 }
 
+.skill-catalog-row {
+  align-items: stretch;
+  min-height: 168px;
+}
+
+.skill-catalog-row .data-row-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.skill-catalog-row .data-row-title {
+  flex-wrap: wrap;
+}
+
+.skill-env-editor {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--slate-50);
+}
+
+.skill-env-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skill-env-editor-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.skill-env-editor-row > * {
+  min-width: 0;
+}
+
+.skill-env-editor-meta {
+  margin-top: 6px;
+}
+
 /* ---------- Workspace ---------- */
 .workspace-rel-grid {
   display: grid;
@@ -2653,6 +2699,21 @@ select {
   flex-wrap: wrap;
 }
 
+.toolbar-inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  line-height: 1.4;
+}
+
+.toolbar-inline-label input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
 .toolbar-row.grow > *:first-child {
   flex: 1;
   min-width: 220px;
@@ -2828,5 +2889,9 @@ select {
 
   .msg {
     max-width: 100%;
+  }
+
+  .skill-env-editor-row {
+    grid-template-columns: 1fr;
   }
 }

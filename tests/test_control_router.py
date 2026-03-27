@@ -31,6 +31,66 @@ def test_list_sessions_prefers_multi_agent_runner() -> None:
     assert rows == [{"session_id": "s1", "agent_id": "papers"}]
 
 
+def test_batch_delete_sessions_returns_deleted_and_not_found() -> None:
+    sessions = {
+        ("papers", "s1"): {"session_id": "s1"},
+        ("main", "s2"): {"session_id": "s2"},
+    }
+    deleted_calls: list[tuple[str, str]] = []
+
+    def _get_session(*, agent_id: str, session_id: str):
+        return sessions.get((agent_id, session_id))
+
+    def _delete_session(*, agent_id: str, session_id: str):
+        deleted_calls.append((agent_id, session_id))
+        sessions.pop((agent_id, session_id), None)
+
+    runner = SimpleNamespace(
+        get_session=_get_session,
+        delete_session=_delete_session,
+        runner=SimpleNamespace(
+            agent=SimpleNamespace(
+                memory=SimpleNamespace(
+                    delete_session_messages=lambda session_id: 2,
+                ),
+            ),
+        ),
+    )
+    req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(runner=runner)),
+    )
+
+    payload = control_router.SessionBatchDeleteRequest(
+        sessions=[
+            control_router.SessionDeleteTarget(
+                session_id="s1",
+                agent_id="papers",
+            ),
+            control_router.SessionDeleteTarget(
+                session_id="s1",
+                agent_id="papers",
+            ),
+            control_router.SessionDeleteTarget(session_id="s2"),
+            control_router.SessionDeleteTarget(
+                session_id="missing",
+                agent_id="papers",
+            ),
+        ],
+    )
+
+    result = asyncio.run(control_router.batch_delete_sessions(payload, req))
+
+    assert result["deleted_count"] == 2
+    assert deleted_calls == [("papers", "s1"), ("main", "s2")]
+    assert result["not_found"] == [
+        {
+            "session_id": "missing",
+            "agent_id": "papers",
+            "detail": "Session 'missing' not found in agent 'papers'",
+        },
+    ]
+
+
 def test_apply_config_calls_runtime_hooks(monkeypatch) -> None:
     saved = {}
 

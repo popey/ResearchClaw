@@ -30,6 +30,7 @@ export type SkillTraceInfo = {
 /** SSE event from /api/agent/chat/stream */
 export type StreamEvent = {
   type:
+    | "heartbeat"
     | "thinking"
     | "content"
     | "content_replace"
@@ -75,6 +76,26 @@ export type SessionItem = {
   created_at?: number;
   updated_at?: number;
   message_count?: number;
+};
+
+export type SessionDeleteTarget = {
+  session_id: string;
+  agent_id?: string;
+};
+
+export type SessionBatchDeleteResult = {
+  deleted: Array<{
+    deleted: boolean;
+    session_id: string;
+    agent_id: string;
+    memory_messages_deleted?: number;
+  }>;
+  deleted_count: number;
+  not_found?: Array<{
+    session_id: string;
+    agent_id: string;
+    detail?: string;
+  }>;
 };
 
 export type CronJobItem = {
@@ -137,6 +158,19 @@ export type EnvItem = {
   value: string;
 };
 
+export type SkillEnvRequirement = {
+  name?: string;
+  required?: boolean;
+  secret?: boolean;
+  description?: string;
+  default?: string;
+};
+
+export type SkillRequirements = {
+  env?: Array<SkillEnvRequirement | string>;
+  [key: string]: unknown;
+};
+
 export type SkillItem = {
   id?: string;
   name?: string;
@@ -148,6 +182,8 @@ export type SkillItem = {
   location?: string;
   format?: string;
   diagnostics?: string[];
+  triggers?: string[];
+  requires?: SkillRequirements;
 };
 
 export type SkillRewriteSummary = {
@@ -173,6 +209,44 @@ export type SkillRepositoryImportResult = {
   count: number;
   imported: ImportedSkillItem[];
   diagnostics?: string[];
+};
+
+export type SkillImportProgressEvent = {
+  type:
+    | "start"
+    | "stage"
+    | "discovered"
+    | "skill_start"
+    | "skill_done"
+    | "warning"
+    | "done"
+    | "error";
+  message?: string;
+  phase?: string;
+  repo_url?: string;
+  requested_ref?: string;
+  ref?: string;
+  count?: number;
+  roots?: string[];
+  index?: number;
+  total?: number;
+  skill_root?: string;
+  skill_name?: string;
+  skill?: ImportedSkillItem;
+  result?: SkillRepositoryImportResult;
+};
+
+export type SkillDeleteResult = {
+  ok: boolean;
+  skill: string;
+  action: "deleted" | "hidden" | string;
+  source?: string;
+};
+
+export type SkillBatchDeleteResult = {
+  deleted: SkillDeleteResult[];
+  deleted_count: number;
+  not_found?: string[];
 };
 
 export type McpClientItem = {
